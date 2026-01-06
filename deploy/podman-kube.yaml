@@ -1,0 +1,246 @@
+# Kubernetes-style deployment for Podman Desktop
+# 
+# Usage with Podman:
+#   podman kube play deploy/podman-kube.yaml
+#
+# Stop and remove:
+#   podman kube down deploy/podman-kube.yaml
+#
+# Prerequisites:
+#   1. Create secrets first (see below)
+#   2. Update ConfigMaps with your settings
+#
+# Create secrets:
+#   podman secret create google-api-key - <<< "your-google-api-key"
+#   podman secret create ssh-private-key ~/.ssh/id_ed25519
+
+---
+# =============================================================================
+# ConfigMap: Application Configuration
+# =============================================================================
+# Mount as .env file for pydantic-settings to load
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sysadmin-agents-config
+  labels:
+    app: sysadmin-agents
+data:
+  # Application configuration (loaded as .env file)
+  .env: |
+    # ==========================================================================
+    # LLM Configuration
+    # ==========================================================================
+    # Note: GOOGLE_API_KEY is mounted from secret, not here
+    DEFAULT_MODEL=gemini-2.0-flash
+    
+    # Optional: Role-specific models
+    # DISPATCHER_MODEL=gemini-2.0-flash
+    # SPECIALIST_MODEL=gemini-2.0-flash
+    
+    # ==========================================================================
+    # MCP Server Configuration (linux-mcp-server)
+    # ==========================================================================
+    # SSH user for connecting to RHEL servers
+    LINUX_MCP_USER=admin
+    
+    # SSH key path (mounted from secret)
+    LINUX_MCP_SSH_KEY_PATH=/opt/app-root/src/.ssh/id_ed25519
+    
+    # Log paths the agent is allowed to read
+    LINUX_MCP_ALLOWED_LOG_PATHS=/var/log/messages,/var/log/secure,/var/log/audit/audit.log
+    
+    # MCP server log level
+    LINUX_MCP_LOG_LEVEL=INFO
+    
+    # ==========================================================================
+    # Server Configuration
+    # ==========================================================================
+    # Session storage (SQLite for single-node, PostgreSQL for production)
+    SESSION_SERVICE_URI=sqlite+aiosqlite:///./sessions.db
+    
+    # CORS allowed origins (comma-separated or *)
+    ALLOWED_ORIGINS=*
+    
+    # Enable Web UI
+    SERVE_WEB_UI=true
+
+---
+# =============================================================================
+# ConfigMap: MCP Targets (RHEL Servers)
+# =============================================================================
+# Optional: Define target servers for MCP connections
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-targets
+  labels:
+    app: sysadmin-agents
+data:
+  # List of RHEL servers to manage (one per line)
+  # Format: hostname or IP address
+  targets.txt: |
+    # Add your RHEL server hostnames or IPs here
+    # rhel-server-1.example.com
+    # rhel-server-2.example.com
+    # 192.168.1.100
+
+---
+# =============================================================================
+# Secret: Sensitive Configuration
+# =============================================================================
+# Note: For production, use podman secret or external secret management
+# This example uses stringData for readability (base64 encoded in real k8s)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sysadmin-agents-secrets
+  labels:
+    app: sysadmin-agents
+type: Opaque
+stringData:
+  # Google API Key for Gemini
+  # Replace with your actual API key
+  GOOGLE_API_KEY: "your-google-api-key-here"
+  
+  # SSH private key for MCP server
+  # Replace with your actual SSH private key content
+  # Or mount from file using: podman secret create ssh-key ~/.ssh/id_ed25519
+  id_ed25519: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    # Paste your SSH private key here
+    # Or use external secret mounting
+    -----END OPENSSH PRIVATE KEY-----
+
+---
+# =============================================================================
+# Deployment: Sysadmin Agents
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sysadmin-agents
+  labels:
+    app: sysadmin-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sysadmin-agents
+  template:
+    metadata:
+      labels:
+        app: sysadmin-agents
+    spec:
+      containers:
+        - name: agents
+          # Update with your registry/image
+          image: ghcr.io/your-org/sysadmin-agents:latest
+          # For local testing, use:
+          # image: localhost/sysadmin-agents:latest
+          imagePullPolicy: IfNotPresent
+          
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+              name: http
+          
+          # Environment variables from Secret
+          env:
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sysadmin-agents-secrets
+                  key: GOOGLE_API_KEY
+            - name: PORT
+              value: "8000"
+            - name: CONFIG_PATH
+              value: "/opt/app-root/config"
+          
+          # Volume mounts
+          volumeMounts:
+            # Mount .env config file
+            - name: config
+              mountPath: /opt/app-root/config
+              readOnly: true
+            
+            # Mount SSH key for MCP server
+            - name: ssh-key
+              mountPath: /opt/app-root/src/.ssh
+              readOnly: true
+            
+            # Mount MCP targets config (optional)
+            - name: mcp-targets
+              mountPath: /opt/app-root/mcp-targets
+              readOnly: true
+          
+          # Resource limits
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /list-apps
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+          
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /list-apps
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+      
+      # Volumes
+      volumes:
+        # ConfigMap with .env file
+        - name: config
+          configMap:
+            name: sysadmin-agents-config
+        
+        # Secret with SSH key
+        - name: ssh-key
+          secret:
+            secretName: sysadmin-agents-secrets
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+                mode: 0400
+        
+        # ConfigMap with MCP targets
+        - name: mcp-targets
+          configMap:
+            name: mcp-targets
+            optional: true
+
+---
+# =============================================================================
+# Service: Expose the Agents API
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: sysadmin-agents
+  labels:
+    app: sysadmin-agents
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30800
+      protocol: TCP
+      name: http
+  selector:
+    app: sysadmin-agents
+

@@ -1,0 +1,69 @@
+# Docker build ignore file
+# Symlink equivalent to .containerignore for Docker compatibility
+# See .containerignore for the canonical list
+
+# Git
+.git
+.gitignore
+
+# Python bytecode and cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv
+venv
+env
+ENV
+
+# Testing
+tests/
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov/
+.tox
+.nox
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cursor/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Development files
+.env
+.env.local
+*.log
+scripts/
+
+# Deployment manifests (not needed in container)
+deploy/
+
+# CI/CD
+.github/
+
+# Session databases (should be created fresh in container)
+# Per ADK docs troubleshooting section
+sessions.db
+*.db
+
+# Screenshots and assets
+docs/screenshots/
+

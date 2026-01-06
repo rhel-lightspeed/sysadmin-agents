@@ -1,8 +1,8 @@
+# OpenShift Route for external access
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: sysadmin-agents
-  namespace: adk-web
   labels:
     app: sysadmin-agents
 spec:
@@ -16,4 +16,3 @@ spec:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
-

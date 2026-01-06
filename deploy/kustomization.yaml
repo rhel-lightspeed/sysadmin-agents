@@ -1,27 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: adk-web
+namespace: sysadmin-agents
 
 resources:
+  - namespace.yaml
+  - configmap.yaml
   - deployment.yaml
   - service.yaml
   - route.yaml
 
-# ConfigMap is generated from agent code
-# Run: ./scripts/sync-agents.sh to generate
-configMapGenerator:
-  - name: sysadmin-agents-code
-    files:
-      - agents/__init__.py
-      - agents/root_cause_analysis/__init__.py
-      - agents/root_cause_analysis/agent.py
-      - agents/root_cause_analysis/config.yaml
-
-generatorOptions:
-  disableNameSuffixHash: true
-
 commonLabels:
   app.kubernetes.io/name: sysadmin-agents
   app.kubernetes.io/part-of: sysadmin-agents
-

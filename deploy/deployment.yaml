@@ -1,10 +1,21 @@
+# OpenShift/Kubernetes Deployment for Sysadmin Agents
+# Uses pre-built container image with ADK Web UI and API Server
+#
+# Prerequisites:
+#   1. Push image to registry (via CI or manually)
+#   2. Create secrets:
+#      oc create secret generic gemini-api-key --from-literal=GOOGLE_API_KEY='your-key'
+#      oc create secret generic ssh-private-key --from-file=id_ed25519=~/.ssh/id_ed25519
+#   3. Apply ConfigMap for settings (optional)
+#
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sysadmin-agents
-  namespace: adk-web
   labels:
     app: sysadmin-agents
+    app.kubernetes.io/name: sysadmin-agents
+    app.kubernetes.io/component: api-server
 spec:
   replicas: 1
   selector:
@@ -16,59 +27,61 @@ spec:
         app: sysadmin-agents
     spec:
       containers:
-        - name: adk-server
-          image: python:3.11-slim
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -e
-              
-              # Create workspace directories
-              mkdir -p /workspace/agents /workspace/core /workspace/.adk /workspace/packages
-              
-              # Copy code from ConfigMaps
-              cp -r /configmap/agents/* /workspace/agents/ 2>/dev/null || true
-              cp -r /configmap/core/* /workspace/core/ 2>/dev/null || true
-              
-              # Install dependencies
-              echo "Installing dependencies..."
-              pip install --no-cache-dir --target=/workspace/packages \
-                google-adk>=1.18.0 \
-                linux-mcp-server \
-                pyyaml \
-                pydantic-settings
-              
-              # Set up Python path
-              export PYTHONPATH=/workspace/packages:/workspace:$PYTHONPATH
-              export PATH=/workspace/packages/bin:$PATH
-              
-              # Start ADK Web
-              echo "Starting ADK Web..."
-              cd /workspace
-              python -m google.adk.cli web \
-                --host=0.0.0.0 \
-                --port=8000 \
-                --allow_origins=*
+        - name: agents
+          # Update with your registry/image after CI builds
+          image: ghcr.io/your-org/sysadmin-agents:latest
+          imagePullPolicy: Always
+          
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          
+          # Environment variables
           env:
+            - name: PORT
+              value: "8000"
             - name: GOOGLE_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: gemini-api-key
                   key: GOOGLE_API_KEY
-            - name: HOME
-              value: /workspace
             - name: LINUX_MCP_SSH_KEY_PATH
-              value: /var/lib/mcp/.ssh/id_ed25519
+              value: /opt/app-root/src/.ssh/id_ed25519
             - name: LINUX_MCP_USER
               valueFrom:
                 secretKeyRef:
                   name: ssh-credentials
                   key: username
                   optional: true
-          ports:
-            - name: http
-              containerPort: 8000
-              protocol: TCP
+            - name: CONFIG_PATH
+              value: /opt/app-root/config
+            # Additional config from ConfigMap (optional)
+            - name: LINUX_MCP_ALLOWED_LOG_PATHS
+              valueFrom:
+                configMapKeyRef:
+                  name: sysadmin-agents-config
+                  key: LINUX_MCP_ALLOWED_LOG_PATHS
+                  optional: true
+            - name: ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: sysadmin-agents-config
+                  key: ALLOWED_ORIGINS
+                  optional: true
+          
+          # Volume mounts
+          volumeMounts:
+            # SSH key for MCP server
+            - name: ssh-key
+              mountPath: /opt/app-root/src/.ssh
+              readOnly: true
+            # Optional: Config file mount
+            - name: config
+              mountPath: /opt/app-root/config
+              readOnly: true
+          
+          # Resource limits
           resources:
             requests:
               cpu: 200m
@@ -76,30 +89,35 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
-          volumeMounts:
-            - name: agents-code
-              mountPath: /configmap/agents
-            - name: core-code
-              mountPath: /configmap/core
-            - name: workspace
-              mountPath: /workspace
-            - name: ssh-key
-              mountPath: /var/lib/mcp/.ssh
-              readOnly: true
-          workingDir: /workspace
+          
+          # Probes
+          livenessProbe:
+            httpGet:
+              path: /list-apps
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+          
+          readinessProbe:
+            httpGet:
+              path: /list-apps
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+      
+      # Volumes
       volumes:
-        - name: agents-code
-          configMap:
-            name: sysadmin-agents-code
-        - name: core-code
-          configMap:
-            name: sysadmin-core-code
-        - name: workspace
-          emptyDir: {}
         - name: ssh-key
           secret:
             secretName: ssh-private-key
             defaultMode: 0400
             optional: true
+        - name: config
+          configMap:
+            name: sysadmin-agents-config
+            optional: true
+      
       restartPolicy: Always
       terminationGracePeriodSeconds: 30

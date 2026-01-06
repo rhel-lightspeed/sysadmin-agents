@@ -49,6 +49,29 @@ The **Sysadmin Agent** is the single entry point. Users describe their problem n
 
 No need to think about which agent to use - just describe the problem.
 
+### MCP Architecture
+
+The [linux-mcp-server](https://github.com/rhel-lightspeed/linux-mcp-server) runs as a **subprocess** inside the same container (following the [official ADK pattern](https://google.github.io/adk-docs/tools-custom/mcp-tools/)):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Container                                                  │
+│  ┌─────────────────┐    stdio    ┌───────────────────────┐  │
+│  │   FastAPI       │◄───────────►│   linux-mcp-server    │  │
+│  │  (ADK API +     │             │   (19 read-only tools)│  │
+│  │   Web UI)       │             │                       │  │
+│  └─────────────────┘             └───────────┬───────────┘  │
+└──────────────────────────────────────────────┼──────────────┘
+                                               │ SSH
+                              ┌────────────────┼────────────────┐
+                              ▼                ▼                ▼
+                         ┌────────┐       ┌────────┐       ┌────────┐
+                         │ RHEL 1 │       │ RHEL 2 │       │ RHEL n │
+                         └────────┘       └────────┘       └────────┘
+```
+
+The MCP server uses SSH with key-based authentication to execute read-only diagnostic commands on remote RHEL servers.
+
 ### Agent Architecture
 
 The orchestrator uses `transfer_to_agent` for routing (no planner - it's a router, not a worker). 
@@ -88,11 +111,14 @@ This provides transparent, step-by-step reasoning for complex troubleshooting.
 
 ### Prerequisites
 
-- Python 3.10+
-- [Gemini API Key](https://aistudio.google.com/apikey)
-- SSH key-based access to target RHEL/Linux hosts
+- **API Key**: [Gemini API Key](https://aistudio.google.com/apikey)
+- **SSH Access**: Key-based SSH access to target RHEL/Linux hosts
+- **Runtime** (choose one):
+  - Python 3.10+ (for local development)
+  - Podman or Docker (for container deployment)
+  - OpenShift/Kubernetes cluster (for production)
 
-### Installation
+### Option 1: Local Development
 
 ```bash
 git clone https://github.com/your-org/sysadmin-agents.git
@@ -104,29 +130,38 @@ source .venv/bin/activate
 
 # Install dependencies
 uv pip install -e .
-```
 
-### Configuration
-
-Set environment variables:
-
-```bash
-# Required
+# Set environment variables
 export GOOGLE_API_KEY=your-gemini-api-key
-
-# SSH access for linux-mcp-server
 export LINUX_MCP_USER=your-ssh-username
 export LINUX_MCP_SSH_KEY_PATH=~/.ssh/id_ed25519
-```
 
-### Run the Agents
-
-```bash
 # Start ADK web interface
 adk web --port 8000 agents
 ```
 
 Open http://localhost:8000 and select the **sysadmin** agent.
+
+### Option 2: Container (Podman/Docker)
+
+```bash
+# Pull or build the image
+podman build -t sysadmin-agents:latest -f Containerfile .
+
+# Run with your API key and SSH key mounted
+podman run -d \
+  -p 8000:8000 \
+  -e GOOGLE_API_KEY="your-api-key" \
+  -e LINUX_MCP_USER="your-ssh-user" \
+  -v ~/.ssh/id_ed25519:/opt/app-root/src/.ssh/id_ed25519:ro \
+  sysadmin-agents:latest
+```
+
+Open http://localhost:8000/dev-ui/ to access the ADK Web UI.
+
+### Option 3: Kubernetes/OpenShift
+
+See [Container Deployment](#container-deployment) section below.
 
 ## Example Queries
 
@@ -479,29 +514,59 @@ The orchestrator correctly chains specialist agents based on the multi-faceted r
 
 ## API Testing with curl
 
-You can test agents directly via the ADK REST API:
-
-### 1. Create a session
+You can test agents directly via the ADK REST API (works for local, container, or deployed instances):
 
 ```bash
-SESSION_ID=$(curl -s -X POST http://127.0.0.1:8000/apps/sysadmin/users/user/sessions \
-  -H "Content-Type: application/json" | jq -r '.id')
-echo "Session ID: $SESSION_ID"
+# Set your endpoint (local, container, or OpenShift)
+export API_URL="http://localhost:8000"
+# export API_URL="https://sysadmin-agents.apps.your-cluster.example.com"
 ```
 
-### 2. Send a query via SSE
+### 1. List available agents
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/run_sse \
+curl -s "$API_URL/list-apps" | jq
+# Returns: ["agents", "core"]
+```
+
+### 2. Create a session
+
+```bash
+curl -s -X POST "$API_URL/apps/agents/users/user/sessions/my-session" \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq
+```
+
+### 3. Send a query
+
+```bash
+curl -s -X POST "$API_URL/run" \
   -H "Content-Type: application/json" \
   -d '{
-    "app_name": "sysadmin",
-    "user_id": "user", 
-    "session_id": "'"$SESSION_ID"'",
-    "new_message": {
+    "appName": "agents",
+    "userId": "user", 
+    "sessionId": "my-session",
+    "newMessage": {
       "role": "user",
       "parts": [{"text": "Check system performance on myserver.example.com"}]
     }
+  }' | jq
+```
+
+### 4. Stream responses (SSE)
+
+```bash
+curl -s -X POST "$API_URL/run_sse" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "appName": "agents",
+    "userId": "user", 
+    "sessionId": "my-session",
+    "newMessage": {
+      "role": "user",
+      "parts": [{"text": "Check disk usage on myserver.example.com"}]
+    },
+    "streaming": false
   }' --no-buffer
 ```
 
@@ -522,27 +587,32 @@ sysadmin-agents/
 │   │   ├── agent.py           # Agent loader
 │   │   └── root_agent.yaml    # Instructions & prompts
 │   ├── performance/           # Performance Analysis
-│   │   ├── agent.py
-│   │   └── root_agent.yaml
 │   ├── capacity/              # Capacity Planning
-│   │   ├── agent.py
-│   │   └── root_agent.yaml
 │   ├── upgrade/               # Upgrade Readiness
-│   │   ├── agent.py
-│   │   └── root_agent.yaml
 │   └── security/              # Security Audit
-│       ├── agent.py
-│       └── root_agent.yaml
 ├── core/                      # Shared infrastructure
-│   ├── config.py              # Pydantic settings
+│   ├── config.py              # Pydantic settings (env vars)
 │   ├── mcp.py                 # MCP connection utilities
-│   ├── callbacks.py           # ADK callbacks (rate limiting, validation)
-│   ├── safety.py              # Gemini-as-a-Judge safety screening
-│   ├── events.py              # Event processing utilities
+│   ├── callbacks.py           # ADK callbacks
+│   ├── safety.py              # Safety screening
+│   ├── events.py              # Event processing
 │   ├── state.py               # Session state management
 │   └── agent_loader.py        # YAML config loader with MCP
-├── deploy/                    # OpenShift manifests
-├── scripts/                   # Test and utility scripts
+├── deploy/                    # Kubernetes/OpenShift manifests
+│   ├── deployment.yaml        # Container deployment
+│   ├── service.yaml           # ClusterIP service
+│   ├── route.yaml             # OpenShift route
+│   ├── configmap.yaml         # Application config
+│   ├── secrets.yaml.example   # Secret templates
+│   ├── podman-kube.yaml       # Podman Desktop deployment
+│   └── kustomization.yaml     # Kustomize config
+├── Containerfile              # Container build (UBI9 Python)
+├── main.py                    # FastAPI entry point (ADK pattern)
+├── .github/workflows/
+│   ├── ci.yaml                # Lint and test
+│   └── build-image.yaml       # Container build & push
+├── scripts/
+│   └── deploy.sh              # OpenShift deployment script
 ├── docs/                      # Documentation
 └── tests/                     # Tests
 ```
@@ -675,9 +745,99 @@ uv run ruff format .
 uv run pytest tests/ -v
 ```
 
-## OpenShift Deployment
+## Container Deployment
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for deployment instructions.
+The agents are packaged as a container image that includes:
+- **ADK Web UI** - Browser-based interface for testing agents
+- **ADK API Server** - RESTful API for programmatic access
+- **linux-mcp-server** - MCP tools for RHEL/Linux system administration
+
+### Container Image
+
+The image is built using UBI9 Python 3.11 and follows [Google ADK deployment patterns](https://google.github.io/adk-docs/deploy/cloud-run/).
+
+```bash
+# Build locally
+podman build -t sysadmin-agents:latest -f Containerfile .
+
+# Or pull from GitHub Container Registry (after CI runs)
+podman pull ghcr.io/your-org/sysadmin-agents:latest
+```
+
+### Configuration
+
+All configuration is via environment variables (no hardcoded values):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GOOGLE_API_KEY` | Gemini API key (required) | - |
+| `LINUX_MCP_USER` | SSH username for RHEL servers | - |
+| `LINUX_MCP_SSH_KEY_PATH` | Path to SSH key in container | `/opt/app-root/src/.ssh/id_ed25519` |
+| `LINUX_MCP_ALLOWED_LOG_PATHS` | Allowed log paths | `/var/log/messages,/var/log/secure` |
+| `PORT` | Server port | `8000` |
+| `ALLOWED_ORIGINS` | CORS origins | `*` |
+| `SERVE_WEB_UI` | Enable ADK Web UI | `true` |
+
+### Run with Podman
+
+```bash
+podman run -d \
+  --name sysadmin-agents \
+  -p 8000:8000 \
+  -e GOOGLE_API_KEY="your-api-key" \
+  -e LINUX_MCP_USER="admin" \
+  -v ~/.ssh/id_ed25519:/opt/app-root/src/.ssh/id_ed25519:ro \
+  sysadmin-agents:latest
+```
+
+### Run with Podman Kube (Kubernetes YAML)
+
+For more complex deployments with ConfigMaps and Secrets:
+
+```bash
+# Edit deploy/podman-kube.yaml with your settings
+# Then deploy:
+podman kube play deploy/podman-kube.yaml
+
+# Access at http://localhost:30800/dev-ui/
+
+# Stop:
+podman kube down deploy/podman-kube.yaml
+```
+
+### Deploy to OpenShift
+
+```bash
+# Login to your cluster
+oc login https://api.your-cluster.example.com:6443
+
+# Create namespace and secrets
+oc create namespace sysadmin-agents
+oc create secret generic gemini-api-key \
+  --from-literal=GOOGLE_API_KEY='your-key' \
+  -n sysadmin-agents
+oc create secret generic ssh-private-key \
+  --from-file=id_ed25519=~/.ssh/id_ed25519 \
+  -n sysadmin-agents
+
+# Deploy using the script
+./scripts/deploy.sh sysadmin-agents ghcr.io/your-org/sysadmin-agents:latest
+
+# Or apply manifests manually
+oc apply -k deploy/ -n sysadmin-agents
+```
+
+The route will be created automatically. Access at:
+`https://sysadmin-agents-sysadmin-agents.apps.your-cluster.example.com/dev-ui/`
+
+### CI/CD
+
+GitHub Actions workflow (`.github/workflows/build-image.yaml`) automatically:
+1. Runs tests
+2. Builds container image with Podman
+3. Pushes to GitHub Container Registry on `main` branch or tags
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions.
 
 ## Contributing
 

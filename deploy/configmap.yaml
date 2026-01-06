@@ -1,0 +1,34 @@
+# ConfigMap for Sysadmin Agents configuration
+# Update these values for your environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sysadmin-agents-config
+  labels:
+    app: sysadmin-agents
+data:
+  # MCP server configuration
+  LINUX_MCP_ALLOWED_LOG_PATHS: "/var/log/messages,/var/log/secure,/var/log/audit/audit.log"
+  LINUX_MCP_LOG_LEVEL: "INFO"
+  
+  # CORS allowed origins (comma-separated or *)
+  ALLOWED_ORIGINS: "*"
+  
+  # Session storage (SQLite for single-node)
+  SESSION_SERVICE_URI: "sqlite+aiosqlite:///./sessions.db"
+  
+  # Enable Web UI
+  SERVE_WEB_UI: "true"
+  
+  # Default model
+  DEFAULT_MODEL: "gemini-2.0-flash"
+  
+  # Optional: .env file format (loaded by python-dotenv)
+  .env: |
+    # This file is mounted to /opt/app-root/config/.env
+    # and loaded at container startup
+    LINUX_MCP_LOG_LEVEL=INFO
+    LINUX_MCP_ALLOWED_LOG_PATHS=/var/log/messages,/var/log/secure
+    ALLOWED_ORIGINS=*
+    SERVE_WEB_UI=true
+
