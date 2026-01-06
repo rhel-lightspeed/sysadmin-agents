@@ -30,7 +30,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from core.config import settings
 
@@ -41,6 +41,7 @@ try:
     from google.adk.models.llm_response import LlmResponse
     from google.adk.tools.base_tool import BaseTool
     from google.adk.tools.tool_context import ToolContext
+
     ADK_TYPES_AVAILABLE = True
 except ImportError:
     # Fallback for environments where ADK is not fully installed
@@ -461,9 +462,7 @@ class GeminiSafetyJudge:
                 should_block=False,
             )
 
-    def screen_tool_call(
-        self, tool_name: str, tool_args: dict[str, Any]
-    ) -> SafetyResult:
+    def screen_tool_call(self, tool_name: str, tool_args: dict[str, Any]) -> SafetyResult:
         """
         Screen a tool call for safety issues (sync).
 
@@ -681,7 +680,7 @@ def create_safety_screening_callback():
 
     def safety_callback(
         callback_context: CallbackContext, llm_request: LlmRequest
-    ) -> Optional[LlmResponse]:
+    ) -> LlmResponse | None:
         """Screen user input before sending to the model."""
         if not hasattr(llm_request, "contents"):
             return None
@@ -708,6 +707,7 @@ def create_safety_screening_callback():
             if ADK_TYPES_AVAILABLE:
                 try:
                     from google.genai import types
+
                     return LlmResponse(
                         content=types.Content(
                             role="model",
@@ -731,6 +731,7 @@ def create_safety_screening_callback():
                 if ADK_TYPES_AVAILABLE:
                     try:
                         from google.genai import types
+
                         return LlmResponse(
                             content=types.Content(
                                 role="model",
@@ -756,7 +757,7 @@ def create_tool_safety_callback():
 
     def tool_safety_callback(
         tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Screen tool calls before execution."""
         tool_name = getattr(tool, "name", str(tool))
 

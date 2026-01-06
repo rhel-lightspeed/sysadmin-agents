@@ -152,8 +152,9 @@ class TestAgentCreation(unittest.TestCase):
         It's model-agnostic (works with Gemini, Claude, GPT, etc.)
         """
         try:
-            from agents.sysadmin.agent import sysadmin_agent
             from google.adk.planners import PlanReActPlanner
+
+            from agents.sysadmin.agent import sysadmin_agent
 
             # All sub-agents should have PlanReActPlanner
             for sub_agent in sysadmin_agent.sub_agents:

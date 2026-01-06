@@ -451,10 +451,10 @@ def format_thresholds_for_instruction() -> str:
 
     return f"""| Metric | Warning | Critical |
 |--------|---------|----------|
-| CPU Usage | > {cpu.get('warning_percent', 80)}% | > {cpu.get('critical_percent', 95)}% |
-| Memory Usage | > {memory.get('warning_percent', 80)}% | > {memory.get('critical_percent', 95)}% |
-| Swap Usage | > {swap.get('warning_percent', 50)}% | > {swap.get('critical_percent', 80)}% |
-| Disk Usage | > {disk.get('warning_percent', 80)}% | > {disk.get('critical_percent', 95)}% |"""
+| CPU Usage | > {cpu.get("warning_percent", 80)}% | > {cpu.get("critical_percent", 95)}% |
+| Memory Usage | > {memory.get("warning_percent", 80)}% | > {memory.get("critical_percent", 95)}% |
+| Swap Usage | > {swap.get("warning_percent", 50)}% | > {swap.get("critical_percent", 80)}% |
+| Disk Usage | > {disk.get("warning_percent", 80)}% | > {disk.get("critical_percent", 95)}% |"""
 
 
 def inject_config_into_state(state: dict[str, Any]) -> None:

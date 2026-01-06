@@ -20,10 +20,8 @@ following the direct testing pattern from Google ADK samples.
 """
 
 import logging
-import tempfile
 from pathlib import Path
 
-import pytest
 import yaml
 
 logging.basicConfig(level=logging.INFO)
@@ -270,8 +268,12 @@ def test_agent_configs_have_generate_content_config():
             config = yaml.safe_load(f)
 
         # Check for generation config
-        assert "generate_content_config" in config, f"{agent_name} should have generate_content_config"
-        assert "temperature" in config["generate_content_config"], f"{agent_name} should have temperature"
+        assert "generate_content_config" in config, (
+            f"{agent_name} should have generate_content_config"
+        )
+        assert "temperature" in config["generate_content_config"], (
+            f"{agent_name} should have temperature"
+        )
 
 
 # =============================================================================

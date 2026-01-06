@@ -20,7 +20,7 @@ import re
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -33,6 +33,7 @@ try:
     from google.adk.models.llm_response import LlmResponse
     from google.adk.tools.base_tool import BaseTool
     from google.adk.tools.tool_context import ToolContext
+
     ADK_TYPES_AVAILABLE = True
 except ImportError:
     # Fallback for environments where ADK is not fully installed
@@ -55,7 +56,7 @@ CONFIG_PATH = Path(__file__).parent / "callbacks_config.yaml"
 @lru_cache(maxsize=1)
 def _load_callbacks_config() -> dict:
     """Load callback configuration from YAML file.
-    
+
     Returns:
         Configuration dictionary with rate limiting, security patterns, etc.
     """
@@ -77,6 +78,7 @@ def _get_config() -> dict:
 # =============================================================================
 # Configuration Accessors
 # =============================================================================
+
 
 def get_rate_limit_secs() -> int:
     """Get rate limit window in seconds."""
@@ -129,7 +131,7 @@ def get_memory_warning_threshold() -> int:
 
 def rate_limit_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
+) -> LlmResponse | None:
     """
     Callback that implements query rate limiting.
 
@@ -188,19 +190,24 @@ def rate_limit_callback(
             )
             callback_context.state["rate_limited"] = True
             callback_context.state["rate_limit_reset"] = now + remaining_secs
-            
+
             # Return an LlmResponse to gracefully handle rate limiting
             if ADK_TYPES_AVAILABLE:
                 try:
                     from google.genai import types
+
                     return LlmResponse(
                         content=types.Content(
                             role="model",
-                            parts=[types.Part(text=(
-                                f"I'm currently processing many requests. "
-                                f"Please wait about {int(remaining_secs)} seconds "
-                                f"and try again. This helps ensure reliable service."
-                            ))],
+                            parts=[
+                                types.Part(
+                                    text=(
+                                        f"I'm currently processing many requests. "
+                                        f"Please wait about {int(remaining_secs)} seconds "
+                                        f"and try again. This helps ensure reliable service."
+                                    )
+                                )
+                            ],
                         )
                     )
                 except ImportError:
@@ -225,7 +232,7 @@ def rate_limit_callback(
 
 def input_validation_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
+) -> LlmResponse | None:
     """
     Validate user input before it reaches the LLM.
 
@@ -262,13 +269,18 @@ def input_validation_callback(
             if settings.ENVIRONMENT == "production" and ADK_TYPES_AVAILABLE:
                 try:
                     from google.genai import types
+
                     return LlmResponse(
                         content=types.Content(
                             role="model",
-                            parts=[types.Part(text=(
-                                "I cannot process this request as it contains potentially "
-                                "dangerous commands. Please rephrase your request."
-                            ))],
+                            parts=[
+                                types.Part(
+                                    text=(
+                                        "I cannot process this request as it contains potentially "
+                                        "dangerous commands. Please rephrase your request."
+                                    )
+                                )
+                            ],
                         )
                     )
                 except ImportError:
@@ -296,7 +308,7 @@ def create_before_model_callback():
 
     def combined_callback(
         callback_context: CallbackContext, llm_request: LlmRequest
-    ) -> Optional[LlmResponse]:
+    ) -> LlmResponse | None:
         """Combined before_model callback."""
         # Run rate limiting first
         rate_result = rate_limit_callback(callback_context, llm_request)
@@ -318,7 +330,7 @@ def create_before_model_callback():
 # =============================================================================
 
 
-def before_agent_callback(callback_context: CallbackContext) -> Optional[Any]:
+def before_agent_callback(callback_context: CallbackContext) -> Any | None:
     """
     Initialize session state before agent execution.
 
@@ -359,6 +371,7 @@ def before_agent_callback(callback_context: CallbackContext) -> Optional[Any]:
     if "config_injected" not in state:
         try:
             from core.state import inject_config_into_state
+
             inject_config_into_state(state)
             state["config_injected"] = True
         except Exception as e:
@@ -374,7 +387,7 @@ def before_agent_callback(callback_context: CallbackContext) -> Optional[Any]:
 
 def before_tool_callback(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Validate tool arguments before execution.
 
@@ -444,7 +457,7 @@ def after_tool_callback(
     args: dict[str, Any],
     tool_context: ToolContext,
     tool_response: Any,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Process tool results after execution.
 
@@ -530,7 +543,7 @@ def create_callbacks_for_agent(include_safety: bool = True) -> dict[str, Any]:
 
         def combined_before_model(
             callback_context: CallbackContext, llm_request: LlmRequest
-        ) -> Optional[LlmResponse]:
+        ) -> LlmResponse | None:
             """Combined callback with safety screening."""
             # Run safety screening first
             safety_result = safety_callback(callback_context, llm_request)
@@ -547,7 +560,7 @@ def create_callbacks_for_agent(include_safety: bool = True) -> dict[str, Any]:
 
         def combined_tool_callback(
             tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
-        ) -> Optional[dict[str, Any]]:
+        ) -> dict[str, Any] | None:
             """Combined tool callback with safety screening."""
             # Run safety screening first
             safety_result = tool_safety(tool, args, tool_context)

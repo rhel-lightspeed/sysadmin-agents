@@ -36,7 +36,6 @@ import logging
 from pathlib import Path
 
 import yaml
-
 from google.adk.agents import Agent
 
 from core.agent_loader import create_agent_with_mcp

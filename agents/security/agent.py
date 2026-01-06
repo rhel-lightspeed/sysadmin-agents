@@ -39,4 +39,3 @@ root_agent = create_agent_with_mcp(CONFIG_PATH)
 security_agent = root_agent
 
 logger.info(f"Security agent created: {root_agent.name}")
-
