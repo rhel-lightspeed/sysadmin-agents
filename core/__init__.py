@@ -2,12 +2,29 @@
 Core configuration module for sysadmin-agents.
 
 Provides centralized settings management, MCP utilities, and shared functions.
+
+Module Organization:
+-------------------
+**Actively Used by Agents:**
+- config.py: Settings and model constants
+- mcp.py: MCP toolset creation
+- agent_loader.py: create_agent_with_mcp() for agent creation with callbacks
+- callbacks.py: Security callbacks (rate limiting, input validation)
+- safety.py: Gemini-as-a-Judge safety screening
+
+**Infrastructure Modules (for structured outputs and future use):**
+- types.py: Pydantic models for structured agent outputs (RCAReport, etc.)
+- artifacts.py: Artifact storage utilities
+- state.py: Session state management utilities
+- events.py: Event classification and logging
+
+**Utilities:**
+- utils.py: General utilities (config loading, logging setup)
 """
 
-from core.agent_factory import (
-    create_orchestrator_agent,
-    create_specialist_agent,
-    create_sub_agent_wrapper,
+from core.agent_loader import (
+    create_agent_with_mcp,
+    get_agent_config,
 )
 from core.artifacts import (
     ArtifactFilenames,
@@ -49,7 +66,6 @@ from core.logging_config import (
 )
 from core.mcp import (
     create_mcp_toolset,
-    get_mcp_connection_params,
     get_mcp_env,
     verify_mcp_installation,
 )
@@ -97,14 +113,10 @@ from core.utils import (
 )
 
 __all__ = [
-    # Artifacts
-    "ArtifactHelper",
-    "ArtifactFilenames",
-    "ArtifactMetadata",
-    "MimeType",
-    "save_rca_report",
-    "save_performance_report",
-    "save_capacity_report",
+    # === ACTIVELY USED ===
+    # Agent Loader (primary agent creation)
+    "create_agent_with_mcp",
+    "get_agent_config",
     # Settings
     "settings",
     "Settings",
@@ -114,12 +126,45 @@ __all__ = [
     "MODEL_CLAUDE_SONNET",
     # MCP utilities
     "get_mcp_env",
-    "get_mcp_connection_params",
     "create_mcp_toolset",
     "verify_mcp_installation",
-    # Tools for Agent Config
-    "get_mcp_toolset",
-    "linux_mcp_tools",
+    # Callbacks
+    "create_callbacks_for_agent",
+    "create_before_model_callback",
+    "before_agent_callback",
+    "before_tool_callback",
+    "after_tool_callback",
+    "rate_limit_callback",
+    # Safety (Gemini as a Judge)
+    "GeminiSafetyJudge",
+    "SafetyVerdict",
+    "SafetyResult",
+    "ThreatCategory",
+    "get_safety_judge",
+    "quick_screen_input",
+    "quick_screen_output",
+    "BLOCKED_RESPONSE",
+    # Logging
+    "configure_logging",
+    "configure_from_environment",
+    "get_logger",
+    "set_adk_debug",
+    # === INFRASTRUCTURE (for structured outputs) ===
+    # Types (Pydantic models for structured agent outputs)
+    "Severity",
+    "SafetyRating",
+    "ResourceStatus",
+    "HostInfo",
+    "TimelineEvent",
+    "Recommendation",
+    "RCAReport",
+    "ResourceUsage",
+    "ProcessInfo",
+    "PerformanceReport",
+    "FilesystemUsage",
+    "DirectorySize",
+    "CleanupRecommendation",
+    "CapacityReport",
     # State Management
     "StateManager",
     "StatePrefix",
@@ -135,50 +180,21 @@ __all__ = [
     "classify_event",
     "log_event",
     "format_event_summary",
-    # Safety (Gemini as a Judge)
-    "GeminiSafetyJudge",
-    "SafetyVerdict",
-    "SafetyResult",
-    "ThreatCategory",
-    "get_safety_judge",
-    "quick_screen_input",
-    "quick_screen_output",
-    "BLOCKED_RESPONSE",
+    # Artifacts
+    "ArtifactHelper",
+    "ArtifactFilenames",
+    "ArtifactMetadata",
+    "MimeType",
+    "save_rca_report",
+    "save_performance_report",
+    "save_capacity_report",
+    # Tools for Agent Config
+    "get_mcp_toolset",
+    "linux_mcp_tools",
+    # === UTILITIES ===
     # Config utilities
     "load_agent_config",
     "load_config_for_agent",
     "get_project_root",
     "setup_logging",
-    # Logging
-    "configure_logging",
-    "configure_from_environment",
-    "get_logger",
-    "set_adk_debug",
-    # Callbacks
-    "create_callbacks_for_agent",
-    "create_before_model_callback",
-    "before_agent_callback",
-    "before_tool_callback",
-    "after_tool_callback",
-    "rate_limit_callback",
-    # Agent factory
-    "create_specialist_agent",
-    "create_orchestrator_agent",
-    "create_sub_agent_wrapper",
-    # Types
-    "Severity",
-    "SafetyRating",
-    "ResourceStatus",
-    "HostInfo",
-    "TimelineEvent",
-    "Recommendation",
-    "RCAReport",
-    "ResourceUsage",
-    "ProcessInfo",
-    "PerformanceReport",
-    "FilesystemUsage",
-    "DirectorySize",
-    "CleanupRecommendation",
-    "CapacityReport",
-    "InvestigationContext",
 ]

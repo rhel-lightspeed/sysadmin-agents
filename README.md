@@ -10,25 +10,25 @@ Enterprise-grade AI agents for Linux/RHEL system administration, powered by [Goo
 │                                                                               │
 │  ┌────────────────────────────────────────────────────────────────────────┐  │
 │  │                         Sysadmin Agent                                  │  │
-│  │                     (PlanReActPlanner)                                  │  │
+│  │                      (Orchestrator/Router)                              │  │
 │  │           "Describe your problem, I'll handle everything"               │  │
 │  └───────────────────────────────┬────────────────────────────────────────┘  │
-│                                  │ auto-routes                               │
-│    ┌─────────────────────────────┼─────────────────────────────┐             │
-│    ▼                ▼            ▼            ▼                ▼             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐                      │
-│  │   RCA    │  │  Perf    │  │ Capacity │  │ Upgrade  │                      │
-│  │Specialist│  │Specialist│  │Specialist│  │Specialist│                      │
-│  │          │  │          │  │          │  │          │                      │
-│  │Root Cause│  │Bottleneck│  │Disk Usage│  │ Readiness│                      │
-│  │ Analysis │  │  Finder  │  │ Analysis │  │  Check   │                      │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘                      │
-│       │             │             │             │                            │
-│       └─────────────┴─────────────┴─────────────┘                            │
-│                           │                                                  │
+│                                  │ transfer_to_agent                         │
+│    ┌─────────────┬───────────────┼───────────────┬─────────────┐             │
+│    ▼             ▼               ▼               ▼             ▼             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
+│  │   RCA    │  │  Perf    │  │ Capacity │  │ Upgrade  │  │ Security │       │
+│  │Specialist│  │Specialist│  │Specialist│  │Specialist│  │Specialist│       │
+│  │          │  │          │  │          │  │          │  │          │       │
+│  │Root Cause│  │Bottleneck│  │Disk Usage│  │ Readiness│  │  Audit   │       │
+│  │ Analysis │  │  Finder  │  │ Analysis │  │  Check   │  │ & Harden │       │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
+│       │             │             │             │             │              │
+│       └─────────────┴─────────────┴─────────────┴─────────────┘              │
+│                           │ PlanReActPlanner                                 │
 │              ┌────────────▼────────────┐                                     │
 │              │    linux-mcp-server     │                                     │
-│              │       (20+ tools)       │                                     │
+│              │       (19 tools)        │                                     │
 │              └────────────┬────────────┘                                     │
 └───────────────────────────┼──────────────────────────────────────────────────┘
                             │ SSH
@@ -43,22 +43,46 @@ Enterprise-grade AI agents for Linux/RHEL system administration, powered by [Goo
 
 The **Sysadmin Agent** is the single entry point. Users describe their problem naturally, and the agent:
 
-1. **Analyzes** the request to understand what's needed
-2. **Routes** to the appropriate specialist(s) automatically
-3. **Executes** investigations using linux-mcp-server tools
-4. **Synthesizes** findings into actionable recommendations
+1. **Routes** to the appropriate specialist(s) automatically via `transfer_to_agent`
+2. **Specialists execute** investigations using linux-mcp-server tools with PlanReActPlanner
+3. **Synthesizes** findings into actionable recommendations
 
 No need to think about which agent to use - just describe the problem.
 
+### Agent Architecture
+
+The orchestrator uses `transfer_to_agent` for routing (no planner - it's a router, not a worker). 
+Sub-agents use [PlanReActPlanner](https://google.github.io/adk-docs/agents/llm-agents/) for structured reasoning:
+
+```
+/*PLANNING*/
+1. First, check system logs for authentication failures
+2. Then, analyze listening ports for unexpected services
+3. Finally, review audit logs for security events
+
+/*ACTION*/
+read_log_file(path='/var/log/secure', lines=100, host='server1')
+
+/*REASONING*/
+The user asked about security issues. Checking /var/log/secure first
+will reveal any failed login attempts or SSH brute-force attacks.
+
+/*FINAL_ANSWER*/
+Based on my investigation...
+```
+
+This provides transparent, step-by-step reasoning for complex troubleshooting.
+
 ## Agents
 
-| Agent | Purpose | Auto-routes to |
-|-------|---------|----------------|
-| **sysadmin** | Main entry point | Automatically selects specialists |
-| **rca** | Root Cause Analysis | Incidents, outages, crash investigation |
-| **performance** | Performance Analysis | Slow systems, high CPU/memory |
-| **capacity** | Capacity Planning | Disk space, storage analysis |
-| **upgrade** | Upgrade Readiness | OS upgrade assessment, pre-flight checks |
+| Agent | Purpose | Example Queries |
+|-------|---------|-----------------|
+| **sysadmin** | Main entry point (orchestrator) | "Check my server", "What's wrong with my system?" |
+| **rca** | Root Cause Analysis | "Why did the server crash?", "Investigate the outage" |
+| **performance** | Performance Analysis | "System is slow", "High CPU usage" |
+| **capacity** | Capacity Planning | "Disk is full", "Where's my space going?" |
+| **upgrade** | Upgrade Readiness | "Ready to upgrade?", "Pre-flight check for Fedora 43" |
+| **security** | Security Audit | "Check for security issues", "Are there failed logins?" |
 
 ## Quick Start
 
@@ -74,12 +98,12 @@ No need to think about which agent to use - just describe the problem.
 git clone https://github.com/your-org/sysadmin-agents.git
 cd sysadmin-agents
 
-# Create virtual environment
-python -m venv .venv
+# Create virtual environment (using uv recommended)
+uv venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install -e ".[dev]"
+uv pip install -e .
 ```
 
 ### Configuration
@@ -124,6 +148,38 @@ The disk is almost full on storage.example.com. Find what's using the space.
 Is my Fedora 42 system ready to upgrade to Fedora 43? Check everything.
 ```
 
+```
+Check for security issues on prod-server.example.com - any failed logins or suspicious activity?
+```
+
+## Screenshots
+
+The ADK Web UI provides real-time visibility into agent operations including routing, tool calls, and responses.
+
+### Performance Analysis
+
+The orchestrator routes to the performance agent, which gathers CPU, memory, disk, and network metrics to identify bottlenecks:
+
+![Performance Analysis - Routing and Tool Calls](docs/screenshots/performance-full.png)
+
+*Shows: Orchestrator routing → Performance agent → Tool calls (get_cpu_information, get_memory_information, get_disk_usage, etc.) → Final analysis with bottleneck identification and recommendations*
+
+### Capacity Analysis
+
+For disk space issues, the capacity agent recursively analyzes directories and provides cleanup recommendations with safety ratings:
+
+![Capacity Analysis - Space Usage](docs/screenshots/capacity-full.png)
+
+*Shows: Directory analysis → Largest space consumers → Cleanup recommendations with safety levels (SAFE/MODERATE/CAUTION) → Recoverable space summary*
+
+### Security Audit
+
+The security agent checks authentication logs, open ports, and audit events to identify vulnerabilities:
+
+![Security Audit - Hardening Recommendations](docs/screenshots/security-full.png)
+
+*Shows: SSH hardening recommendations → SELinux analysis → Network security → Multi-factor authentication suggestions*
+
 ## Use Cases
 
 These agents are designed to address real-world sysadmin scenarios, inspired by the 
@@ -149,8 +205,7 @@ Check system performance on myserver.example.com - analyze CPU, memory,
 and identify any performance bottlenecks.
 ```
 
-**Tools called** (verified):
-- `transfer_to_agent` → `performance_agent`
+**Tools used**:
 - `get_system_information` - OS version, kernel, uptime
 - `get_cpu_information` - Load averages, CPU model, utilization
 - `get_memory_information` - RAM/swap usage
@@ -194,13 +249,11 @@ Analyze disk usage on myserver.example.com. Find the largest directories
 and identify cleanup opportunities with safety assessments.
 ```
 
-**Tools called** (verified):
-- `transfer_to_agent` → `capacity_agent`
+**Tools used**:
 - `get_disk_usage` - All mounted filesystems
-- `list_directories` (recursive) - /, /usr, /var, /var/cache
-- `list_files` - Log files in /var/log
-- `get_journal_logs` - Disk-related warnings
+- `list_directories` - Recursive directory size analysis
 - `list_block_devices` - Physical storage layout
+- `get_journal_logs` - Disk-related warnings
 
 **Example output**:
 ```
@@ -244,12 +297,12 @@ Investigate any recent issues or errors on myserver.example.com.
 Check system logs and services for problems.
 ```
 
-**Tools called** (verified):
-- `transfer_to_agent` → `rca_agent`
+**Tools used**:
 - `get_system_information` - Uptime, OS version
-- `get_journal_logs` (priority=warning, 200 lines) - System warnings/errors
-- `get_service_status` (rhcd) - Problem service status
-- `get_audit_logs` - SELinux denials (requires root)
+- `get_journal_logs` - System warnings/errors (filterable by priority, unit, time)
+- `get_service_status` - Problem service status
+- `get_service_logs` - Service-specific logs
+- `get_audit_logs` - SELinux denials
 
 **Example output**:
 ```
@@ -291,15 +344,14 @@ Check if myserver.example.com is ready for an OS upgrade.
 Assess disk space, system health, and identify any blockers.
 ```
 
-**Tools called** (verified):
-- `transfer_to_agent` → `upgrade_agent`
+**Tools used**:
 - `get_system_information` - Current OS version
 - `get_disk_usage` - Space for upgrade
 - `get_memory_information` - RAM availability
 - `get_cpu_information` - CPU resources
 - `list_processes` - Running processes
-- `get_service_status` (NetworkManager, sshd) - Critical services
-- `get_journal_logs` (priority=error) - Pre-existing errors
+- `get_service_status` - Critical services (NetworkManager, sshd)
+- `get_journal_logs` - Pre-existing errors
 - `get_network_interfaces` - Network configuration
 - `list_block_devices` - Storage layout
 
@@ -338,6 +390,68 @@ cat /etc/os-release     # Exact OS version
 
 ---
 
+### 🔐 "Check for security issues"
+
+**Agent**: `security_agent`
+
+For security auditing and hardening assessment, the security agent:
+
+1. **Analyzes authentication logs** - SSH login attempts from `/var/log/secure`
+2. **Reviews audit logs** - SELinux denials, privilege escalation, file access
+3. **Checks network exposure** - Open ports, listening services, active connections
+4. **Identifies suspicious activity** - Brute force attempts, unusual connections
+5. **Provides hardening recommendations** - With severity ratings (CRITICAL/HIGH/MEDIUM/LOW)
+
+**Example prompt**:
+```
+Check for security issues on prod-server.example.com. 
+Look for failed login attempts, suspicious activity, and open ports.
+```
+
+**Tools used**:
+- `read_log_file` - `/var/log/secure` for SSH login attempts
+- `get_audit_logs` - Linux audit subsystem events
+- `get_listening_ports` - Open ports assessment
+- `get_network_connections` - Active connection analysis
+- `list_services` - Running services inventory
+- `get_journal_logs` - Security-related log entries
+
+**Example output**:
+```
+# Security Audit Report
+
+## Executive Summary
+Overall security posture: MEDIUM
+Key findings: 0 critical, 2 high, 3 medium
+
+## Authentication Security
+### SSH Login Analysis
+- Total login attempts: 847
+- Failed attempts: 312 (from 47 unique IPs)
+- Successful logins: 535
+- Suspicious activity: Yes - multiple failed attempts from unknown IPs
+
+## Network Exposure
+| Port | Service | Binding | Risk Assessment |
+|------|---------|---------|-----------------|
+| 22 | sshd | 0.0.0.0 | Expected - SSH access |
+| 80 | nginx | 0.0.0.0 | Expected - Web server |
+| 3306 | mysqld | 0.0.0.0 | ⚠️ HIGH - Database exposed to all interfaces |
+
+## Findings Summary
+| # | Finding | Severity | Recommendation |
+|---|---------|----------|----------------|
+| 1 | MySQL exposed on all interfaces | HIGH | Bind to localhost only |
+| 2 | Multiple failed SSH attempts | HIGH | Configure fail2ban |
+| 3 | SELinux denials detected | MEDIUM | Review with sealert |
+
+## Immediate Actions Required
+1. `mysql> SET GLOBAL bind_address = '127.0.0.1';`
+2. `dnf install fail2ban && systemctl enable --now fail2ban`
+```
+
+---
+
 ### 🏥 "Give me a complete health check"
 
 **Agent**: `sysadmin` (orchestrator)
@@ -347,15 +461,17 @@ For comprehensive system assessment, the orchestrator uses multiple specialists:
 **Example prompt**:
 ```
 Run a complete health check on myserver.example.com - check performance, 
-disk space, any issues in logs, and whether it's ready for the next OS upgrade.
+disk space, any issues in logs, security, and whether it's ready for the next OS upgrade.
 ```
 
-**Routing behavior** (verified):
+**Routing behavior**:
 1. **sysadmin** → Routes to `performance_agent` for resource analysis
-2. **performance_agent** → Completes, routes to `capacity_agent`
-3. **capacity_agent** → Completes, routes to `rca_agent` 
-4. **rca_agent** → Completes, routes back to `sysadmin`
-5. **sysadmin** → Synthesizes all findings
+2. **performance_agent** → Completes, returns to orchestrator
+3. **sysadmin** → Routes to `capacity_agent` for disk analysis
+4. **capacity_agent** → Completes, returns to orchestrator
+5. **sysadmin** → Routes to `security_agent` for security audit
+6. **security_agent** → Completes, returns to orchestrator
+7. **sysadmin** → Synthesizes all findings into comprehensive report
 
 The orchestrator correctly chains specialist agents based on the multi-faceted request.
 
@@ -411,7 +527,10 @@ sysadmin-agents/
 │   ├── capacity/              # Capacity Planning
 │   │   ├── agent.py
 │   │   └── root_agent.yaml
-│   └── upgrade/               # Upgrade Readiness
+│   ├── upgrade/               # Upgrade Readiness
+│   │   ├── agent.py
+│   │   └── root_agent.yaml
+│   └── security/              # Security Audit
 │       ├── agent.py
 │       └── root_agent.yaml
 ├── core/                      # Shared infrastructure
@@ -421,7 +540,7 @@ sysadmin-agents/
 │   ├── safety.py              # Gemini-as-a-Judge safety screening
 │   ├── events.py              # Event processing utilities
 │   ├── state.py               # Session state management
-│   └── agent_loader.py        # YAML config loader
+│   └── agent_loader.py        # YAML config loader with MCP
 ├── deploy/                    # OpenShift manifests
 ├── scripts/                   # Test and utility scripts
 ├── docs/                      # Documentation
@@ -430,17 +549,31 @@ sysadmin-agents/
 
 ## MCP Tools Available
 
-Each agent has access to these linux-mcp-server tools:
+Each agent has access to these [linux-mcp-server](https://github.com/rhel-lightspeed/linux-mcp-server) tools:
 
-| Category | Tools |
-|----------|-------|
-| **System** | get_system_information, get_uptime, get_cpu_info |
-| **Memory** | get_memory_information |
-| **Disk** | get_disk_usage, get_block_devices, list_directory |
-| **Processes** | list_processes, get_process_info |
-| **Services** | list_services, get_service_status, get_service_logs |
-| **Logs** | get_journal_logs, read_file |
-| **Network** | get_network_interfaces, get_network_connections |
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **System** | `get_system_information` | OS, kernel, hostname, uptime |
+| | `get_cpu_information` | CPU model, cores, load averages |
+| | `get_memory_information` | RAM/swap usage |
+| | `get_hardware_information` | Hardware details (DMI info) |
+| **Storage** | `get_disk_usage` | Filesystem utilization (df) |
+| | `list_block_devices` | Physical disks, partitions (lsblk) |
+| | `list_directories` | Directory sizes with sorting options |
+| **Processes** | `list_processes` | Running processes (ps) |
+| | `get_process_info` | Details for specific PID |
+| **Services** | `list_services` | All systemd services |
+| | `get_service_status` | Status of specific service |
+| | `get_service_logs` | Logs for specific service |
+| **Logs** | `get_journal_logs` | Systemd journal (filterable by unit, priority, time) |
+| | `get_audit_logs` | Linux audit subsystem logs |
+| | `read_log_file` | Read specific log file (e.g., /var/log/secure) |
+| | `read_file` | Read any file (cat) |
+| **Network** | `get_network_interfaces` | Interface configuration (ip addr) |
+| | `get_network_connections` | Active connections (ss) |
+| | `get_listening_ports` | Open listening ports |
+
+All tools accept an optional `host` parameter for remote execution via SSH.
 
 ## Adding New Agents
 
@@ -493,21 +626,31 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).parent / "root_agent.yaml"
 
 # Creates agent from YAML config with MCP tools added programmatically
-my_agent = create_agent_with_mcp(CONFIG_PATH)
-logger.info(f"My agent created: {my_agent.name}")
+root_agent = create_agent_with_mcp(CONFIG_PATH)
 
-# Alias for ADK web discovery
-root_agent = my_agent
+# Alias for convenience
+my_agent = root_agent
+
+logger.info(f"My agent created: {my_agent.name}")
 ```
 
-5. To add as a sub-agent to the orchestrator, import it in `agents/sysadmin/agent.py`:
+5. To add as a sub-agent to the orchestrator, update `agents/sysadmin/agent.py`:
 
 ```python
-from agents.my_agent.agent import my_agent
-# Then add to sub_agents list
+# Add your sub-agent creation
+my_sub = create_agent_with_mcp(
+    agents_dir / "my_agent" / "root_agent.yaml",
+    use_planner=True,  # Sub-agents use PlanReActPlanner
+    disallow_transfer_to_peers=True,  # Only orchestrator routes
+)
+
+# Add to sub_agents list
+sub_agents=[rca_sub, performance_sub, capacity_sub, upgrade_sub, security_sub, my_sub],
 ```
 
-6. Restart ADK web - your agent appears automatically!
+6. Update the orchestrator's `root_agent.yaml` to include routing instructions for your new agent.
+
+7. Restart ADK web - your agent appears automatically!
 
 ### MCP Tools Note
 
@@ -521,15 +664,15 @@ in ADK Agent Config YAML, causing serialization errors in the web UI. This proje
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install -e ".[dev]"
+# Install with uv (recommended)
+uv pip install -e .
 
 # Run linting
-ruff check .
-ruff format .
+uv run ruff check .
+uv run ruff format .
 
 # Run tests
-pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ## OpenShift Deployment

@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 # Path to the configuration file
 CONFIG_PATH = Path(__file__).parent / "root_agent.yaml"
 
-# Create the capacity agent with MCP tools
-# Uses YAML for config, programmatic creation for MCP (ADK workaround)
-capacity_agent = create_agent_with_mcp(CONFIG_PATH)
-logger.info(f"Capacity agent created: {capacity_agent.name}")
+# Create the Capacity agent with MCP tools and PlanReActPlanner
+# - use_planner=True: Sub-agents execute tools and produce answers, so they benefit from structured reasoning
+# - PlanReActPlanner is model-agnostic (works with Gemini, Claude, GPT, etc.)
+root_agent = create_agent_with_mcp(CONFIG_PATH, use_planner=True)
 
-# Alias for ADK web discovery
-root_agent = capacity_agent
+# Alias for convenience
+capacity_agent = root_agent
+
+logger.info(f"Capacity agent created: {root_agent.name}")

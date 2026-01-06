@@ -100,11 +100,11 @@ class TestSettings:
 
 
 class TestRCAConfig:
-    """Tests for RCA specialist agent configuration."""
+    """Tests for RCA specialist agent configuration (ADK Agent Config format)."""
 
     @pytest.fixture
     def config_path(self):
-        return Path(__file__).parent.parent / "agents" / "rca" / "config.yaml"
+        return Path(__file__).parent.parent / "agents" / "rca" / "root_agent.yaml"
 
     def test_config_exists(self, config_path):
         """RCA config should exist."""
@@ -117,14 +117,14 @@ class TestRCAConfig:
         assert config is not None
 
     def test_config_has_required_fields(self, config_path):
-        """RCA config should have all required fields."""
+        """RCA config should have all required fields (ADK flat format)."""
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
-        assert "agent" in config, "Missing 'agent' section"
-        assert "name" in config["agent"], "Missing 'agent.name'"
-        assert "model" in config["agent"], "Missing 'agent.model'"
-        assert "description" in config["agent"], "Missing 'agent.description'"
+        # ADK Agent Config uses flat structure
+        assert "name" in config, "Missing 'name'"
+        assert "model" in config, "Missing 'model'"
+        assert "description" in config, "Missing 'description'"
         assert "instruction" in config, "Missing 'instruction'"
 
     def test_config_instruction_not_empty(self, config_path):
@@ -135,21 +135,21 @@ class TestRCAConfig:
         instruction = config["instruction"]
         assert len(instruction) > 100, "Instruction seems too short"
 
-    def test_config_thinking_enabled(self, config_path):
-        """Thinking should be enabled for RCA."""
+    def test_config_has_output_key(self, config_path):
+        """RCA should have output_key for session state."""
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
-        assert "thinking" in config, "Missing 'thinking' section"
-        assert config["thinking"]["enabled"] is True
+        assert "output_key" in config, "Missing 'output_key'"
+        assert config["output_key"] == "last_rca_report"
 
 
 class TestPerformanceConfig:
-    """Tests for Performance specialist agent configuration."""
+    """Tests for Performance specialist agent configuration (ADK Agent Config format)."""
 
     @pytest.fixture
     def config_path(self):
-        return Path(__file__).parent.parent / "agents" / "performance" / "config.yaml"
+        return Path(__file__).parent.parent / "agents" / "performance" / "root_agent.yaml"
 
     def test_config_exists(self, config_path):
         """Performance config should exist."""
@@ -162,21 +162,22 @@ class TestPerformanceConfig:
         assert config is not None
 
     def test_config_has_required_fields(self, config_path):
-        """Performance config should have all required fields."""
+        """Performance config should have all required fields (ADK flat format)."""
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
-        assert "agent" in config
-        assert config["agent"]["name"] == "performance_agent"
+        # ADK Agent Config uses flat structure
+        assert "name" in config
+        assert config["name"] == "performance_agent"
         assert "instruction" in config
 
 
 class TestCapacityConfig:
-    """Tests for Capacity specialist agent configuration."""
+    """Tests for Capacity specialist agent configuration (ADK Agent Config format)."""
 
     @pytest.fixture
     def config_path(self):
-        return Path(__file__).parent.parent / "agents" / "capacity" / "config.yaml"
+        return Path(__file__).parent.parent / "agents" / "capacity" / "root_agent.yaml"
 
     def test_config_exists(self, config_path):
         """Capacity config should exist."""
@@ -189,12 +190,13 @@ class TestCapacityConfig:
         assert config is not None
 
     def test_config_has_required_fields(self, config_path):
-        """Capacity config should have all required fields."""
+        """Capacity config should have all required fields (ADK flat format)."""
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
-        assert "agent" in config
-        assert config["agent"]["name"] == "capacity_agent"
+        # ADK Agent Config uses flat structure
+        assert "name" in config
+        assert config["name"] == "capacity_agent"
         assert "instruction" in config
 
 
@@ -219,7 +221,7 @@ class TestPackageStructure:
         assert agents_dir.exists()
 
         # Check expected agent directories
-        expected_agents = ["rca", "performance", "capacity", "sysadmin"]
+        expected_agents = ["rca", "performance", "capacity", "upgrade", "sysadmin"]
         for agent_name in expected_agents:
             agent_dir = agents_dir / agent_name
             assert agent_dir.exists(), f"Missing agent directory: {agent_name}"
@@ -227,13 +229,13 @@ class TestPackageStructure:
             assert (agent_dir / "agent.py").exists(), f"Missing agent.py in {agent_name}"
 
     def test_each_specialist_has_config(self):
-        """Each specialist should have a config.yaml."""
+        """Each specialist should have a root_agent.yaml (ADK Agent Config format)."""
         agents_dir = Path(__file__).parent.parent / "agents"
-        specialists = ["rca", "performance", "capacity"]
+        specialists = ["rca", "performance", "capacity", "upgrade"]
 
         for specialist in specialists:
-            config_path = agents_dir / specialist / "config.yaml"
-            assert config_path.exists(), f"Missing config.yaml for {specialist}"
+            config_path = agents_dir / specialist / "root_agent.yaml"
+            assert config_path.exists(), f"Missing root_agent.yaml for {specialist}"
 
 
 # =============================================================================
@@ -259,7 +261,7 @@ class TestADKIntegration:
 
             assert sysadmin_agent is not None
             assert sysadmin_agent.name == "sysadmin"
-            assert len(sysadmin_agent.sub_agents) == 3
+            assert len(sysadmin_agent.sub_agents) == 4  # rca, performance, capacity, upgrade
         except ImportError as e:
             pytest.skip(f"ADK not available: {e}")
         except Exception as e:

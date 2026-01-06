@@ -5,10 +5,16 @@ Provides shared configuration and connection utilities for all agents.
 
 The MCP server allows agents to execute commands on remote Linux systems
 via SSH using the linux-mcp-server package.
+
+ADK Pattern Notes:
+- McpToolset is instantiated synchronously at agent definition time
+- The toolset manages the MCP server lifecycle internally
+- Use StdioConnectionParams with StdioServerParameters for local MCP servers
 """
 
 import logging
 import os
+import shutil
 from typing import Any
 
 from core.config import settings
@@ -43,7 +49,7 @@ def get_mcp_env() -> dict[str, str]:
         env["LINUX_MCP_SSH_KEY_PATH"] = ssh_key_path
         logger.debug(f"Using SSH key: {ssh_key_path}")
     else:
-        logger.warning(f"SSH key not found: {ssh_key_path}")
+        logger.debug(f"SSH key not found: {ssh_key_path}")
 
     if settings.LINUX_MCP_USER:
         env["LINUX_MCP_USER"] = settings.LINUX_MCP_USER
@@ -57,52 +63,23 @@ def get_mcp_env() -> dict[str, str]:
     return env
 
 
-def get_mcp_connection_params() -> Any:
+def _get_stdio_server_params() -> Any:
     """
-    Get connection parameters for linux-mcp-server.
-
-    Returns a configured StdioServerParameters object that can be
-    passed to MCPToolset for tool integration.
-
-    This function handles API variations between different versions
-    of the mcp package.
+    Get StdioServerParameters for linux-mcp-server.
 
     Returns:
-        StdioServerParameters (or equivalent) configured for linux-mcp-server.
+        StdioServerParameters configured for linux-mcp-server.
 
     Raises:
         ImportError: If mcp package is not installed.
-        RuntimeError: If no compatible connection params class is found.
     """
-    # Try to import connection parameters - handle different API versions
-    stdio_params_class = None
-
-    # Primary: StdioServerParameters from mcp package
     try:
         from mcp import StdioServerParameters
-
-        stdio_params_class = StdioServerParameters
-        logger.debug("Using mcp.StdioServerParameters")
     except ImportError:
-        pass
+        # Try alternative import path for older mcp versions
+        from mcp.client.stdio import StdioServerParameters
 
-    # Fallback: Try alternative import paths
-    if stdio_params_class is None:
-        try:
-            from mcp.client.stdio import StdioServerParameters
-
-            stdio_params_class = StdioServerParameters
-            logger.debug("Using mcp.client.stdio.StdioServerParameters")
-        except ImportError:
-            pass
-
-    if stdio_params_class is None:
-        logger.error("mcp package not installed or incompatible version")
-        raise ImportError(
-            "mcp package required for MCP integration. Install with: pip install linux-mcp-server"
-        )
-
-    return stdio_params_class(
+    return StdioServerParameters(
         command="linux-mcp-server",
         env=get_mcp_env(),
     )
@@ -112,12 +89,18 @@ def create_mcp_toolset() -> Any | None:
     """
     Create an McpToolset connected to linux-mcp-server.
 
-    This is a convenience function that handles errors gracefully
-    and returns None if connection fails. Use this when you want
-    optional MCP support (agent works without MCP tools).
+    This follows the ADK pattern for MCP integration:
+    1. Create StdioServerParameters with command and env
+    2. Wrap in StdioConnectionParams
+    3. Pass to McpToolset constructor
 
     Returns:
         McpToolset instance, or None if creation fails.
+
+    Note:
+        Per ADK documentation: When deploying agents with MCP tools,
+        the agent and its McpToolset must be defined synchronously.
+        This function is designed for synchronous agent definition.
 
     Example:
         ```python
@@ -129,22 +112,44 @@ def create_mcp_toolset() -> Any | None:
         ```
     """
     try:
-        # Try the new McpToolset first (preferred)
+        # Get the server parameters
+        server_params = _get_stdio_server_params()
+
+        # Try the preferred ADK pattern: McpToolset with StdioConnectionParams
+        try:
+            from google.adk.tools.mcp_tool import McpToolset
+            from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+
+            connection_params = StdioConnectionParams(server_params=server_params)
+            toolset = McpToolset(connection_params=connection_params)
+            logger.info("McpToolset created with StdioConnectionParams")
+            return toolset
+        except ImportError:
+            pass
+
+        # Fallback: Try direct McpToolset import (some ADK versions)
         try:
             from google.adk.tools import McpToolset
 
-            connection_params = get_mcp_connection_params()
-            toolset = McpToolset(connection_params=connection_params)
-            logger.info("McpToolset created successfully")
+            toolset = McpToolset(connection_params=server_params)
+            logger.info("McpToolset created (direct import)")
             return toolset
         except ImportError:
-            # Fall back to deprecated MCPToolset for older versions
+            pass
+
+        # Last resort: Try deprecated MCPToolset (older ADK versions)
+        try:
             from google.adk.tools import MCPToolset
 
-            connection_params = get_mcp_connection_params()
-            toolset = MCPToolset(connection_params=connection_params)
-            logger.info("MCPToolset created successfully (deprecated)")
+            toolset = MCPToolset(connection_params=server_params)
+            logger.warning("Using deprecated MCPToolset - consider upgrading google-adk")
             return toolset
+        except ImportError:
+            pass
+
+        logger.error("No compatible McpToolset class found in google-adk")
+        return None
+
     except ImportError as e:
         logger.error(f"Required package not installed: {e}")
         return None
@@ -167,9 +172,7 @@ def verify_mcp_installation() -> dict[str, Any]:
         - linux_mcp_server_available: bool
         - errors: list of error messages
     """
-    import shutil
-
-    result = {
+    result: dict[str, Any] = {
         "mcp_installed": False,
         "adk_installed": False,
         "ssh_key_exists": False,

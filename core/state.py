@@ -355,3 +355,143 @@ def save_investigation_context(state: dict[str, Any], context: InvestigationCont
     """
     manager = StateManager(state)
     manager.set(StateKeys.INVESTIGATION_CONTEXT, context.to_dict())
+
+
+# =============================================================================
+# Agent Configuration Loading
+# =============================================================================
+
+_agent_config_cache: dict[str, Any] | None = None
+
+
+def load_agent_config() -> dict[str, Any]:
+    """
+    Load agent configuration from YAML file.
+
+    This externalizes hardcoded values from agent instructions, including:
+    - Performance thresholds (CPU, memory, disk warning/critical levels)
+    - Upgrade requirements (disk space, memory requirements)
+    - Common space consumers (paths for capacity analysis)
+    - Safety ratings for cleanup operations
+
+    These values can be injected into session state and used with ADK's
+    instruction templating via {var} syntax.
+
+    Returns:
+        Configuration dictionary.
+
+    Example:
+        config = load_agent_config()
+        thresholds = config.get("performance_thresholds", {})
+        cpu_warning = thresholds.get("cpu", {}).get("warning_percent", 80)
+    """
+    global _agent_config_cache
+
+    if _agent_config_cache is not None:
+        return _agent_config_cache
+
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).parent / "agent_config.yaml"
+
+    try:
+        with open(config_path) as f:
+            _agent_config_cache = yaml.safe_load(f) or {}
+        logger.debug(f"Loaded agent config from {config_path}")
+    except FileNotFoundError:
+        logger.warning(f"Agent config not found at {config_path}, using defaults")
+        _agent_config_cache = {}
+    except Exception as e:
+        logger.error(f"Error loading agent config: {e}")
+        _agent_config_cache = {}
+
+    return _agent_config_cache
+
+
+def get_performance_thresholds() -> dict[str, Any]:
+    """
+    Get performance thresholds from config.
+
+    Returns:
+        Dictionary with cpu, memory, swap, disk, and load_average thresholds.
+    """
+    config = load_agent_config()
+    return config.get("performance_thresholds", {})
+
+
+def get_upgrade_requirements() -> dict[str, Any]:
+    """
+    Get upgrade requirements from config.
+
+    Returns:
+        Dictionary with disk_space and memory requirements.
+    """
+    config = load_agent_config()
+    return config.get("upgrade_requirements", {})
+
+
+def format_thresholds_for_instruction() -> str:
+    """
+    Format performance thresholds as a markdown table for use in instructions.
+
+    This allows thresholds to be externally configured while still being
+    included in agent instructions.
+
+    Returns:
+        Markdown table string.
+    """
+    thresholds = get_performance_thresholds()
+
+    cpu = thresholds.get("cpu", {})
+    memory = thresholds.get("memory", {})
+    swap = thresholds.get("swap", {})
+    disk = thresholds.get("disk", {})
+
+    return f"""| Metric | Warning | Critical |
+|--------|---------|----------|
+| CPU Usage | > {cpu.get('warning_percent', 80)}% | > {cpu.get('critical_percent', 95)}% |
+| Memory Usage | > {memory.get('warning_percent', 80)}% | > {memory.get('critical_percent', 95)}% |
+| Swap Usage | > {swap.get('warning_percent', 50)}% | > {swap.get('critical_percent', 80)}% |
+| Disk Usage | > {disk.get('warning_percent', 80)}% | > {disk.get('critical_percent', 95)}% |"""
+
+
+def inject_config_into_state(state: dict[str, Any]) -> None:
+    """
+    Inject agent configuration into session state for instruction templating.
+
+    This enables using {var} syntax in agent instructions to reference
+    externalized configuration values.
+
+    Args:
+        state: The session state dictionary.
+
+    Example YAML instruction using state variables:
+        instruction: |
+          CPU warning threshold is {cpu_warning_percent}%.
+          Memory critical threshold is {memory_critical_percent}%.
+    """
+    config = load_agent_config()
+    manager = StateManager(state)
+
+    # Inject flattened performance thresholds
+    perf = config.get("performance_thresholds", {})
+    if cpu := perf.get("cpu"):
+        manager.set("cpu_warning_percent", cpu.get("warning_percent", 80))
+        manager.set("cpu_critical_percent", cpu.get("critical_percent", 95))
+    if memory := perf.get("memory"):
+        manager.set("memory_warning_percent", memory.get("warning_percent", 80))
+        manager.set("memory_critical_percent", memory.get("critical_percent", 95))
+    if disk := perf.get("disk"):
+        manager.set("disk_warning_percent", disk.get("warning_percent", 80))
+        manager.set("disk_critical_percent", disk.get("critical_percent", 95))
+
+    # Inject OS configuration
+    os_config = config.get("os", {})
+    manager.set("os_primary", os_config.get("primary", "Linux/RHEL"))
+
+    # Inject formatted thresholds table for instructions
+    manager.set("performance_thresholds_table", format_thresholds_for_instruction())
+
+    logger.debug("Injected agent config into session state")

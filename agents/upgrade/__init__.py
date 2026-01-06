@@ -17,4 +17,3 @@
 from .agent import root_agent, upgrade_agent
 
 __all__ = ["upgrade_agent", "root_agent"]
-

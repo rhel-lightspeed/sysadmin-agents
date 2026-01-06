@@ -1,0 +1,145 @@
+# Agent Configuration
+# Externalizes values that were previously hardcoded in agent instructions
+# These can be loaded into session state for dynamic instruction templating
+
+# =============================================================================
+# OS Configuration  
+# =============================================================================
+os:
+  primary: "Linux/RHEL"
+  supported:
+    - "Fedora"
+    - "CentOS"
+    - "RHEL"
+    - "Ubuntu"  # For future expansion
+
+# =============================================================================
+# Performance Thresholds
+# =============================================================================
+performance_thresholds:
+  cpu:
+    warning_percent: 80
+    critical_percent: 95
+  memory:
+    warning_percent: 80
+    critical_percent: 95
+  swap:
+    warning_percent: 50
+    critical_percent: 80
+  disk:
+    warning_percent: 80
+    critical_percent: 95
+  load_average:
+    # Multiplier of CPU cores for warning/critical
+    warning_multiplier: 1.0
+    critical_multiplier: 2.0
+
+# =============================================================================
+# Upgrade Readiness Requirements
+# =============================================================================
+upgrade_requirements:
+  disk_space:
+    root_recommended_gb: 10
+    root_minimum_gb: 5
+    boot_minimum_mb: 500
+    boot_warning_mb: 200
+    var_recommended_gb: 5
+    var_minimum_gb: 3
+  memory:
+    recommended_gb: 2
+    minimum_gb: 1
+
+# =============================================================================
+# Capacity Analysis Configuration
+# =============================================================================
+capacity:
+  # Common directories that consume space (by category)
+  space_consumers:
+    container_images:
+      - "~/.local/share/containers"
+      - "/var/lib/docker"
+      - "/var/lib/podman"
+    package_cache:
+      - "/var/cache/dnf"
+      - "/var/cache/yum"
+      - "/var/cache/apt"
+    logs:
+      - "/var/log"
+      - "/var/log/journal"
+    user_cache:
+      - "~/.cache"
+      - "~/.local/share"
+    trash:
+      - "~/.local/share/Trash"
+    build_artifacts:
+      - "node_modules"
+      - "target/"
+      - "__pycache__"
+      - ".venv"
+      - "venv"
+
+  # Safety ratings for cleanup operations
+  safety_ratings:
+    safe:
+      description: "Can delete without risk"
+      examples:
+        - "Package cache"
+        - "Trash"
+        - "Old logs"
+    moderate:
+      description: "Review before deleting"
+      examples:
+        - "Container images"
+        - "Build artifacts"
+    caution:
+      description: "May affect applications"
+      examples:
+        - "User data"
+        - "Virtual environments"
+    dangerous:
+      description: "System-critical"
+      examples:
+        - "/boot"
+        - "/etc"
+        - "System libraries"
+
+# =============================================================================
+# MCP Tool Mappings (for reference/documentation)
+# =============================================================================
+# Note: Tool names come from linux-mcp-server and can't be changed here,
+# but this documents the available tools for instruction templates
+mcp_tools:
+  system:
+    - get_system_information
+    - get_cpu_information
+    - get_memory_information
+  disk:
+    - get_disk_usage
+    - list_block_devices
+    - list_directories
+  process:
+    - list_processes
+    - get_process_info
+  service:
+    - get_service_status
+    - get_service_logs
+  logs:
+    - get_journal_logs
+    - get_audit_logs
+    - read_log_file
+  network:
+    - get_network_connections
+    - get_listening_ports
+    - get_network_interfaces
+
+# =============================================================================
+# Output Format Preferences
+# =============================================================================
+output_format:
+  # Whether to use tables in output
+  use_tables: true
+  # Whether to include emoji status indicators
+  use_emoji: true
+  # Maximum recommendation count
+  max_recommendations: 5
+

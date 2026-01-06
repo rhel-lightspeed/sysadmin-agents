@@ -5,6 +5,14 @@ Provides input validation, tool argument checking, session state management,
 and rate limiting following Google ADK best practices.
 
 Configuration is loaded from callbacks_config.yaml for easy customization.
+
+Callback Signatures (per official ADK documentation):
+- before_agent_callback: (CallbackContext) -> Optional[types.Content]
+- after_agent_callback: (CallbackContext) -> Optional[types.Content]
+- before_model_callback: (CallbackContext, LlmRequest) -> Optional[LlmResponse]
+- after_model_callback: (CallbackContext, LlmResponse) -> Optional[LlmResponse]
+- before_tool_callback: (BaseTool, Dict[str, Any], ToolContext) -> Optional[Dict]
+- after_tool_callback: (BaseTool, Dict[str, Any], ToolContext, Any) -> Optional[Dict]
 """
 
 import logging
@@ -12,11 +20,28 @@ import re
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
 from core.config import settings
+
+# ADK type imports - using try/except for graceful degradation
+try:
+    from google.adk.agents.callback_context import CallbackContext
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.tools.base_tool import BaseTool
+    from google.adk.tools.tool_context import ToolContext
+    ADK_TYPES_AVAILABLE = True
+except ImportError:
+    # Fallback for environments where ADK is not fully installed
+    CallbackContext = Any
+    LlmRequest = Any
+    LlmResponse = Any
+    BaseTool = Any
+    ToolContext = Any
+    ADK_TYPES_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -102,16 +127,22 @@ def get_memory_warning_threshold() -> int:
 # =============================================================================
 
 
-def rate_limit_callback(callback_context: Any, llm_request: Any) -> None:
+def rate_limit_callback(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
     """
     Callback that implements query rate limiting.
 
-    Prevents exceeding API quotas by tracking requests per minute
-    and sleeping when the limit is reached.
+    Prevents exceeding API quotas by tracking requests per minute.
+    When the limit is reached, returns an LlmResponse asking the user to wait
+    instead of blocking with sleep (which would block the async event loop).
 
     Args:
         callback_context: CallbackContext with session state.
         llm_request: The LLM request being made.
+
+    Returns:
+        None to proceed with LLM call, or LlmResponse to block.
     """
     # Fix empty text parts (can cause API errors)
     if hasattr(llm_request, "contents"):
@@ -132,7 +163,7 @@ def rate_limit_callback(callback_context: Any, llm_request: Any) -> None:
             "rate_limit_callback [timestamp: %i, req_count: 1, elapsed_secs: 0]",
             now,
         )
-        return
+        return None
 
     request_count = callback_context.state["request_count"] + 1
     elapsed_secs = now - callback_context.state["timer_start"]
@@ -145,14 +176,46 @@ def rate_limit_callback(callback_context: Any, llm_request: Any) -> None:
     )
 
     if request_count > rpm_quota:
-        delay = rate_limit_secs - elapsed_secs + 1
-        if delay > 0:
-            logger.warning("Rate limit reached. Sleeping for %i seconds", delay)
-            time.sleep(delay)
-        callback_context.state["timer_start"] = now
-        callback_context.state["request_count"] = 1
+        remaining_secs = rate_limit_secs - elapsed_secs
+        if remaining_secs > 0:
+            # Instead of blocking with sleep, return a response
+            # This preserves the async event loop
+            logger.warning(
+                "Rate limit reached (%d/%d). User should wait %.0f seconds.",
+                request_count - 1,
+                rpm_quota,
+                remaining_secs,
+            )
+            callback_context.state["rate_limited"] = True
+            callback_context.state["rate_limit_reset"] = now + remaining_secs
+            
+            # Return an LlmResponse to gracefully handle rate limiting
+            if ADK_TYPES_AVAILABLE:
+                try:
+                    from google.genai import types
+                    return LlmResponse(
+                        content=types.Content(
+                            role="model",
+                            parts=[types.Part(text=(
+                                f"I'm currently processing many requests. "
+                                f"Please wait about {int(remaining_secs)} seconds "
+                                f"and try again. This helps ensure reliable service."
+                            ))],
+                        )
+                    )
+                except ImportError:
+                    pass
+            # If we can't create LlmResponse, allow the request (graceful degradation)
+            return None
+        else:
+            # Window has expired, reset the counter
+            callback_context.state["timer_start"] = now
+            callback_context.state["request_count"] = 1
+            callback_context.state["rate_limited"] = False
     else:
         callback_context.state["request_count"] = request_count
+
+    return None  # Allow the LLM call to proceed
 
 
 # =============================================================================
@@ -160,20 +223,25 @@ def rate_limit_callback(callback_context: Any, llm_request: Any) -> None:
 # =============================================================================
 
 
-def input_validation_callback(callback_context: Any, llm_request: Any) -> None:
+def input_validation_callback(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
     """
     Validate user input before it reaches the LLM.
 
     Checks for dangerous command patterns that could harm systems.
-    In production mode, blocks dangerous requests. In development,
-    logs warnings only.
+    In production mode, blocks dangerous requests by returning an LlmResponse.
+    In development, logs warnings only.
 
     Args:
         callback_context: CallbackContext with session state.
         llm_request: The LLM request being made.
+
+    Returns:
+        None to proceed with LLM call, or LlmResponse to block.
     """
     if not hasattr(llm_request, "contents"):
-        return
+        return None
 
     # Extract user text from request
     user_text = ""
@@ -190,15 +258,31 @@ def input_validation_callback(callback_context: Any, llm_request: Any) -> None:
         if re.search(pattern, user_text, re.IGNORECASE):
             logger.error(f"Blocked dangerous pattern detected: {pattern}")
             callback_context.state["security_warning"] = f"Blocked pattern detected: {pattern}"
-            # In production, we could also raise an exception or modify the request
-            return  # Don't check sensitive patterns if already blocked
+            # In production, block the request by returning an LlmResponse
+            if settings.ENVIRONMENT == "production" and ADK_TYPES_AVAILABLE:
+                try:
+                    from google.genai import types
+                    return LlmResponse(
+                        content=types.Content(
+                            role="model",
+                            parts=[types.Part(text=(
+                                "I cannot process this request as it contains potentially "
+                                "dangerous commands. Please rephrase your request."
+                            ))],
+                        )
+                    )
+                except ImportError:
+                    pass
+            return None  # In development, just log and continue
 
     # Check for sensitive patterns (warn only)
     for pattern in get_sensitive_patterns():
         if re.search(pattern, user_text, re.IGNORECASE):
             logger.warning(f"Sensitive pattern detected: {pattern}")
             callback_context.state["security_warning"] = f"Sensitive operation detected: {pattern}"
-            return  # Stop after first match
+            return None  # Just warn, don't block
+
+    return None  # Allow the LLM call to proceed
 
 
 def create_before_model_callback():
@@ -207,13 +291,24 @@ def create_before_model_callback():
     rate limiting and input validation.
 
     Returns:
-        Combined callback function.
+        Combined callback function with proper ADK signature.
     """
 
-    def combined_callback(callback_context: Any, llm_request: Any) -> None:
+    def combined_callback(
+        callback_context: CallbackContext, llm_request: LlmRequest
+    ) -> Optional[LlmResponse]:
         """Combined before_model callback."""
-        rate_limit_callback(callback_context, llm_request)
-        input_validation_callback(callback_context, llm_request)
+        # Run rate limiting first
+        rate_result = rate_limit_callback(callback_context, llm_request)
+        if rate_result is not None:
+            return rate_result
+
+        # Then run input validation
+        validation_result = input_validation_callback(callback_context, llm_request)
+        if validation_result is not None:
+            return validation_result
+
+        return None  # Allow the LLM call to proceed
 
     return combined_callback
 
@@ -223,14 +318,19 @@ def create_before_model_callback():
 # =============================================================================
 
 
-def before_agent_callback(callback_context: Any) -> None:
+def before_agent_callback(callback_context: CallbackContext) -> Optional[Any]:
     """
     Initialize session state before agent execution.
 
-    Sets up default state values and loads any persisted context.
+    Sets up default state values, loads persisted context, and injects
+    externalized configuration for use in instruction templating.
 
     Args:
         callback_context: CallbackContext with session state.
+
+    Returns:
+        None to proceed with agent execution, or types.Content to skip
+        the agent's execution and use the returned content as the response.
     """
     state = callback_context.state
 
@@ -253,6 +353,19 @@ def before_agent_callback(callback_context: Any) -> None:
         state["session_start"] = time.time()
         logger.info("New session started")
 
+    # Inject externalized configuration into state for instruction templating
+    # This enables using {var} syntax in YAML instructions to reference
+    # configurable values like thresholds instead of hardcoding them
+    if "config_injected" not in state:
+        try:
+            from core.state import inject_config_into_state
+            inject_config_into_state(state)
+            state["config_injected"] = True
+        except Exception as e:
+            logger.warning(f"Could not inject agent config: {e}")
+
+    return None  # Proceed with agent execution
+
 
 # =============================================================================
 # Before Tool Callback
@@ -260,8 +373,8 @@ def before_agent_callback(callback_context: Any) -> None:
 
 
 def before_tool_callback(
-    tool: Any, args: dict[str, Any], tool_context: Any
-) -> dict[str, Any] | str | None:
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
+) -> Optional[dict[str, Any]]:
     """
     Validate tool arguments before execution.
 
@@ -269,12 +382,12 @@ def before_tool_callback(
     and logs tool usage for audit purposes.
 
     Args:
-        tool: The tool being called.
+        tool: The tool being called (BaseTool instance).
         args: Arguments being passed to the tool.
         tool_context: ToolContext with session state.
 
     Returns:
-        None to proceed, string error message to abort, or dict to replace result.
+        None to proceed with tool execution, or dict to override tool result.
     """
     tool_name = getattr(tool, "name", str(tool))
     logger.debug(f"Before tool: {tool_name} with args: {args}")
@@ -312,7 +425,11 @@ def before_tool_callback(
                 )
                 logger.warning(error_msg)
                 if settings.ENVIRONMENT == "production":
-                    return error_msg
+                    # Return a dict to override the tool result (per ADK spec)
+                    return {
+                        "status": "error",
+                        "error_message": error_msg,
+                    }
 
     return None
 
@@ -323,11 +440,11 @@ def before_tool_callback(
 
 
 def after_tool_callback(
-    tool: Any,
+    tool: BaseTool,
     args: dict[str, Any],
-    tool_context: Any,
-    tool_response: dict[str, Any],
-) -> dict[str, Any] | None:
+    tool_context: ToolContext,
+    tool_response: Any,
+) -> Optional[dict[str, Any]]:
     """
     Process tool results after execution.
 
@@ -335,10 +452,10 @@ def after_tool_callback(
     or trigger follow-up actions.
 
     Args:
-        tool: The tool that was called.
+        tool: The tool that was called (BaseTool instance).
         args: Arguments that were passed.
         tool_context: ToolContext with session state.
-        tool_response: The tool's response.
+        tool_response: The tool's response (can be any type).
 
     Returns:
         Modified response dict, or None to use original.
@@ -386,12 +503,18 @@ def create_callbacks_for_agent(include_safety: bool = True) -> dict[str, Any]:
     """
     Create a dictionary of all callbacks for agent configuration.
 
+    Following official ADK callback signatures:
+    - before_agent_callback: (CallbackContext) -> Optional[types.Content]
+    - before_model_callback: (CallbackContext, LlmRequest) -> Optional[LlmResponse]
+    - before_tool_callback: (BaseTool, Dict, ToolContext) -> Optional[Dict]
+    - after_tool_callback: (BaseTool, Dict, ToolContext, Any) -> Optional[Dict]
+
     Args:
         include_safety: Whether to include LLM-based safety screening.
                        Recommended for production environments.
 
     Returns:
-        Dictionary with callback function references.
+        Dictionary with callback function references for Agent constructor.
     """
     from core.safety import (
         create_safety_screening_callback,
@@ -405,12 +528,16 @@ def create_callbacks_for_agent(include_safety: bool = True) -> dict[str, Any]:
         # Wrap with safety screening
         safety_callback = create_safety_screening_callback()
 
-        def combined_before_model(callback_context: Any, llm_request: Any) -> None:
+        def combined_before_model(
+            callback_context: CallbackContext, llm_request: LlmRequest
+        ) -> Optional[LlmResponse]:
             """Combined callback with safety screening."""
             # Run safety screening first
-            safety_callback(callback_context, llm_request)
+            safety_result = safety_callback(callback_context, llm_request)
+            if safety_result is not None:
+                return safety_result
             # Then run rate limiting and input validation
-            base_callback(callback_context, llm_request)
+            return base_callback(callback_context, llm_request)
 
         before_model = combined_before_model
 
@@ -419,8 +546,8 @@ def create_callbacks_for_agent(include_safety: bool = True) -> dict[str, Any]:
         tool_safety = create_tool_safety_callback()
 
         def combined_tool_callback(
-            tool: Any, args: dict[str, Any], tool_context: Any
-        ) -> dict[str, Any] | str | None:
+            tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
+        ) -> Optional[dict[str, Any]]:
             """Combined tool callback with safety screening."""
             # Run safety screening first
             safety_result = tool_safety(tool, args, tool_context)

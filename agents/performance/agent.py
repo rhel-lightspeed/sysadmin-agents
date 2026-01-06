@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 # Path to the configuration file
 CONFIG_PATH = Path(__file__).parent / "root_agent.yaml"
 
-# Create the performance agent with MCP tools
-# Uses YAML for config, programmatic creation for MCP (ADK workaround)
-performance_agent = create_agent_with_mcp(CONFIG_PATH)
-logger.info(f"Performance agent created: {performance_agent.name}")
+# Create the Performance agent with MCP tools and PlanReActPlanner
+# - use_planner=True: Sub-agents execute tools and produce answers, so they benefit from structured reasoning
+# - PlanReActPlanner is model-agnostic (works with Gemini, Claude, GPT, etc.)
+root_agent = create_agent_with_mcp(CONFIG_PATH, use_planner=True)
 
-# Alias for ADK web discovery
-root_agent = performance_agent
+# Alias for convenience
+performance_agent = root_agent
+
+logger.info(f"Performance agent created: {root_agent.name}")

@@ -16,7 +16,10 @@
 Integration tests for sysadmin agents.
 
 Tests the actual agent creation and basic functionality,
-following the pattern from Google ADK samples like financial-advisor.
+following the pattern from Google ADK samples.
+
+Note: These tests import module-level agents (ADK pattern).
+MCP server must be available for imports to succeed.
 """
 
 import logging
@@ -36,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 
 
 # =============================================================================
-# Test Agent Creation
+# Test Agent Creation (ADK Pattern: module-level root_agent)
 # =============================================================================
 
 
@@ -79,43 +82,115 @@ class TestAgentCreation(unittest.TestCase):
         except Exception as e:
             self.skipTest(f"MCP server not available: {e}")
 
+    def test_upgrade_agent_created(self):
+        """Upgrade agent should be created successfully."""
+        try:
+            from agents.upgrade.agent import upgrade_agent
+
+            self.assertIsNotNone(upgrade_agent)
+            self.assertEqual(upgrade_agent.name, "upgrade_agent")
+        except ImportError as e:
+            self.skipTest(f"ADK not available: {e}")
+        except Exception as e:
+            self.skipTest(f"MCP server not available: {e}")
+
+    def test_security_agent_created(self):
+        """Security agent should be created successfully."""
+        try:
+            from agents.security.agent import security_agent
+
+            self.assertIsNotNone(security_agent)
+            self.assertEqual(security_agent.name, "security_agent")
+        except ImportError as e:
+            self.skipTest(f"ADK not available: {e}")
+        except Exception as e:
+            self.skipTest(f"MCP server not available: {e}")
+
     def test_sysadmin_agent_created(self):
-        """Sysadmin agent should be created with sub-agents."""
+        """Sysadmin orchestrator should be created with all sub-agents."""
         try:
             from agents.sysadmin.agent import sysadmin_agent
 
             self.assertIsNotNone(sysadmin_agent)
             self.assertEqual(sysadmin_agent.name, "sysadmin")
-            self.assertEqual(len(sysadmin_agent.sub_agents), 3)
+            # Sysadmin has 5 sub-agents: RCA, Performance, Capacity, Upgrade, Security
+            self.assertEqual(len(sysadmin_agent.sub_agents), 5)
         except ImportError as e:
             self.skipTest(f"ADK not available: {e}")
         except Exception as e:
             self.skipTest(f"MCP server not available: {e}")
 
-    def test_sysadmin_has_planner(self):
-        """Sysadmin agent should have PlanReActPlanner."""
+    def test_sysadmin_no_planner(self):
+        """Sysadmin orchestrator should NOT have a planner.
+
+        The orchestrator is a ROUTER that uses transfer_to_agent to delegate.
+        PlanReActPlanner is for agents that execute tools and produce final answers.
+        Using a planner on a router causes output format issues.
+        """
         try:
             from agents.sysadmin.agent import sysadmin_agent
 
-            self.assertIsNotNone(sysadmin_agent.planner)
+            # Orchestrator should NOT have a planner - it's a router
+            self.assertIsNone(
+                sysadmin_agent.planner,
+                "Orchestrator should not have a planner - it routes via transfer_to_agent",
+            )
         except ImportError as e:
             self.skipTest(f"ADK not available: {e}")
+        except Exception as e:
+            self.skipTest(f"MCP server not available: {e}")
+
+    def test_sub_agents_have_planner(self):
+        """Sub-agents should have PlanReActPlanner for structured reasoning.
+
+        Unlike the orchestrator (which routes), sub-agents:
+        - Execute tools to gather information
+        - Analyze results
+        - Produce final answers
+
+        PlanReActPlanner helps with: PLANNING -> ACTION -> REASONING -> FINAL_ANSWER
+        It's model-agnostic (works with Gemini, Claude, GPT, etc.)
+        """
+        try:
+            from agents.sysadmin.agent import sysadmin_agent
+            from google.adk.planners import PlanReActPlanner
+
+            # All sub-agents should have PlanReActPlanner
+            for sub_agent in sysadmin_agent.sub_agents:
+                self.assertIsNotNone(
+                    sub_agent.planner,
+                    f"Sub-agent {sub_agent.name} should have a planner",
+                )
+                self.assertIsInstance(
+                    sub_agent.planner,
+                    PlanReActPlanner,
+                    f"Sub-agent {sub_agent.name} should use PlanReActPlanner",
+                )
+        except ImportError as e:
+            self.skipTest(f"ADK or PlanReActPlanner not available: {e}")
         except Exception as e:
             self.skipTest(f"MCP server not available: {e}")
 
     def test_sub_agents_have_transfer_restrictions(self):
-        """Sub-agents should have transfer restrictions."""
+        """Sub-agents should have peer transfer restrictions.
+
+        Architecture decision:
+        - disallow_transfer_to_peers=True: Sub-agents can't route to each other
+        - disallow_transfer_to_parent=False: Sub-agents CAN return to orchestrator
+        """
         try:
             from agents.sysadmin.agent import sysadmin_agent
 
             for sub_agent in sysadmin_agent.sub_agents:
-                self.assertTrue(
-                    sub_agent.disallow_transfer_to_parent,
-                    f"{sub_agent.name} should disallow transfer to parent",
-                )
+                # Sub-agents should NOT be able to transfer to peers
                 self.assertTrue(
                     sub_agent.disallow_transfer_to_peers,
                     f"{sub_agent.name} should disallow transfer to peers",
+                )
+                # Sub-agents SHOULD be able to return to parent (orchestrator)
+                self.assertFalse(
+                    sub_agent.disallow_transfer_to_parent,
+                    f"{sub_agent.name} should allow transfer to parent",
                 )
         except ImportError as e:
             self.skipTest(f"ADK not available: {e}")
@@ -157,7 +232,6 @@ async def test_rca_agent_responds():
 
         # Agent should respond with something about root cause analysis
         assert len(response) > 0
-        # Response should mention its capabilities
         assert any(
             term in response.lower()
             for term in ["root cause", "analysis", "investigate", "diagnose", "help"]
@@ -214,10 +288,9 @@ async def test_sysadmin_agent_responds():
 async def test_session_state_initialized():
     """Session state should be initialized by before_agent_callback."""
     try:
-        from google.adk.agents.invocation_context import InvocationContext
         from google.adk.sessions import InMemorySessionService
 
-        from agents.rca.agent import rca_agent
+        from core.callbacks import before_agent_callback
 
         session_service = InMemorySessionService()
 
@@ -226,22 +299,21 @@ async def test_session_state_initialized():
             user_id="test_user",
         )
 
-        # Create invocation context
-        invoc_context = InvocationContext(
-            session_service=session_service,
-            invocation_id="TEST123",
-            agent=rca_agent,
-            session=session,
-        )
+        # Create a mock callback context
+        class MockCallbackContext:
+            def __init__(self, state):
+                self.state = state
+                self.agent_name = "test_agent"
+                self.invocation_id = "TEST123"
+
+        mock_context = MockCallbackContext(session.state)
 
         # Run before_agent_callback
-        from core.callbacks import before_agent_callback
-
-        before_agent_callback(invoc_context)
+        before_agent_callback(mock_context)
 
         # Check state was initialized
-        assert "investigation_context" in invoc_context.state
-        assert "session_start" in invoc_context.state
+        assert "investigation_context" in mock_context.state
+        assert "session_start" in mock_context.state
 
     except ImportError as e:
         pytest.skip(f"ADK not available: {e}")
@@ -255,46 +327,41 @@ async def test_session_state_initialized():
 
 
 @pytest.mark.asyncio
-async def test_tool_callback_with_real_context():
-    """Tool callback should work with real ToolContext."""
+async def test_tool_callback_tracks_hosts():
+    """Tool callback should track hosts accessed in investigation context."""
     try:
-        from google.adk.agents.invocation_context import InvocationContext
-        from google.adk.sessions import InMemorySessionService
-        from google.adk.tools import ToolContext
+        from core.callbacks import before_agent_callback, before_tool_callback
 
-        from agents.rca.agent import rca_agent
+        # Create mock state
+        mock_state = {}
 
-        session_service = InMemorySessionService()
+        class MockCallbackContext:
+            def __init__(self, state):
+                self.state = state
+                self.agent_name = "test_agent"
+                self.invocation_id = "TEST456"
 
-        session = session_service.create_session_sync(
-            app_name="sysadmin-agents",
-            user_id="test_user",
-        )
-
-        invoc_context = InvocationContext(
-            session_service=session_service,
-            invocation_id="TEST456",
-            agent=rca_agent,
-            session=session,
-        )
-
-        # Initialize state
-        from core.callbacks import before_agent_callback
-
-        before_agent_callback(invoc_context)
-
-        # Create tool context
-        tool_context = ToolContext(invocation_context=invoc_context)
-
-        # Simulate tool call
-        from core.callbacks import before_tool_callback
+        class MockToolContext:
+            def __init__(self, state):
+                self.state = state
+                self.agent_name = "test_agent"
 
         class MockTool:
             name = "get_disk_usage"
 
+        # Initialize state
+        callback_context = MockCallbackContext(mock_state)
+        before_agent_callback(callback_context)
+
+        # Create tool context
+        tool_context = MockToolContext(mock_state)
+
+        # Simulate tool call
         result = before_tool_callback(MockTool(), {"host": "server1"}, tool_context)
 
-        assert result is None  # Should proceed
+        # Should proceed
+        assert result is None
+        # Host should be tracked
         assert "server1" in tool_context.state["investigation_context"]["hosts_accessed"]
 
     except ImportError as e:

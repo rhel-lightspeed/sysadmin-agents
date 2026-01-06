@@ -132,14 +132,20 @@ def get_agent_config(config_path: Path) -> dict:
 def create_agent_with_mcp(
     config_path: Path,
     include_mcp: bool = True,
+    include_callbacks: bool = True,
+    use_planner: bool = False,
+    disallow_transfer_to_parent: bool = False,
+    disallow_transfer_to_peers: bool = False,
 ) -> Any:
     """
-    Create an agent from YAML config with MCP tools added programmatically.
+    Create an agent from YAML config with MCP tools and callbacks added programmatically.
     
     This function provides the ADK-recommended workaround for McpToolset
     serialization issues in Agent Config YAML. It:
     - Uses YAML for instructions/config (Agent Config pattern)
     - Creates agents programmatically with MCP tools (avoids serialization)
+    - Applies security callbacks (rate limiting, input validation, safety)
+    - Optionally enables PlanReActPlanner for structured reasoning
     
     See: https://google.github.io/adk-docs/agents/config/
     Note: "McpToolset is listed but not fully supported in Agent Config"
@@ -147,9 +153,17 @@ def create_agent_with_mcp(
     Args:
         config_path: Path to the agent's YAML config file.
         include_mcp: Whether to include MCP toolset (default: True).
+        include_callbacks: Whether to include security callbacks (default: True).
+        use_planner: Whether to use PlanReActPlanner for structured reasoning (default: False).
+            Should be True for sub-agents that execute tools and produce final answers.
+            Should be False for orchestrators that only route via transfer_to_agent.
+        disallow_transfer_to_parent: Prevent agent from transferring back to parent.
+            Useful for sub-agents that should complete their task before returning.
+        disallow_transfer_to_peers: Prevent agent from transferring to sibling agents.
+            Useful for ensuring the orchestrator controls all routing decisions.
         
     Returns:
-        Configured Agent instance with MCP tools.
+        Configured Agent instance with MCP tools and callbacks.
         
     Example:
         ```python
@@ -157,10 +171,18 @@ def create_agent_with_mcp(
         from core.agent_loader import create_agent_with_mcp
         
         agent = create_agent_with_mcp(Path(__file__).parent / "root_agent.yaml")
+        
+        # As a sub-agent with planner and transfer restrictions
+        sub_agent = create_agent_with_mcp(
+            Path(__file__).parent / "root_agent.yaml",
+            use_planner=True,  # Sub-agents should use planner
+            disallow_transfer_to_peers=True,  # Only orchestrator routes
+        )
         ```
     """
     from google.adk.agents import Agent
 
+    from core.callbacks import create_callbacks_for_agent
     from core.config import settings
     from core.mcp import create_mcp_toolset
 
@@ -189,6 +211,32 @@ def create_agent_with_mcp(
         except ImportError:
             logger.warning("google.genai.types not available, skipping generation config")
 
+    # Get callbacks for security (rate limiting, input validation, safety screening)
+    callbacks = {}
+    if include_callbacks:
+        callbacks = create_callbacks_for_agent()
+        logger.debug(f"Callbacks added for agent: {config.get('name')}")
+
+    # Build optional transfer restriction parameters
+    transfer_params = {}
+    if disallow_transfer_to_parent:
+        transfer_params["disallow_transfer_to_parent"] = True
+    if disallow_transfer_to_peers:
+        transfer_params["disallow_transfer_to_peers"] = True
+
+    # Add PlanReActPlanner if requested
+    # PlanReActPlanner is model-agnostic and works with any model (Gemini, Claude, GPT, etc.)
+    # It structures reasoning with: PLANNING -> ACTION -> REASONING -> FINAL_ANSWER
+    # Use for sub-agents that execute tools and produce answers, NOT for routing orchestrators
+    planner = None
+    if use_planner:
+        try:
+            from google.adk.planners import PlanReActPlanner
+            planner = PlanReActPlanner()
+            logger.info(f"PlanReActPlanner enabled for agent: {config.get('name')}")
+        except ImportError:
+            logger.warning(f"PlanReActPlanner not available for agent: {config.get('name')}")
+
     # Create agent programmatically (avoids McpToolset serialization issues)
     agent = Agent(
         model=config.get("model", settings.DEFAULT_MODEL),
@@ -196,10 +244,13 @@ def create_agent_with_mcp(
         description=config.get("description", "").strip() if config.get("description") else "",
         instruction=config.get("instruction", "").strip() if config.get("instruction") else "",
         tools=tools,
+        planner=planner,  # PlanReActPlanner for structured reasoning (or None)
         output_key=config.get("output_key"),
         generate_content_config=generate_content_config,
+        **transfer_params,  # Apply transfer restrictions for sub-agents
+        **callbacks,  # Apply security callbacks
     )
 
-    logger.info(f"Agent created with MCP tools: {agent.name}")
+    logger.info(f"Agent created with MCP tools and callbacks: {agent.name}")
     return agent
 

@@ -19,7 +19,17 @@ Expert Linux/RHEL system administrator that routes to specialist sub-agents
 based on the type of problem the user describes.
 
 Uses YAML for instructions (Agent Config pattern) with sub-agents
-imported from Python modules to ensure MCP tools work correctly.
+created programmatically to ensure MCP tools work correctly.
+
+Architecture:
+- Orchestrator routes via transfer_to_agent (no planner needed - it's a router, not a worker)
+- Sub-agents: RCA, Performance, Capacity, Upgrade, Security (these do the actual work)
+- Transfer control: Sub-agents can't route to peers (only back to orchestrator)
+
+NOTE: PlanReActPlanner is NOT used on the orchestrator because:
+- Orchestrator's job is to ROUTE (transfer_to_agent), not to plan/execute/answer
+- PlanReActPlanner expects a FINAL_ANSWER, but orchestrator just transfers
+- Using PlanReActPlanner on a router causes output format issues
 """
 
 import logging
@@ -27,6 +37,10 @@ from pathlib import Path
 
 import yaml
 
+from google.adk.agents import Agent
+
+from core.agent_loader import create_agent_with_mcp
+from core.callbacks import create_callbacks_for_agent
 from core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,53 +55,73 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _create_sysadmin_agent():
+def _init_agent() -> Agent:
     """
-    Create the sysadmin orchestrator agent.
-    
+    Initialize the sysadmin orchestrator agent.
+
+    Following ADK Java pattern: static initAgent() factory method.
     Creates fresh sub-agent instances to avoid "already has a parent" errors.
-    Sub-agents are created with MCP tools via create_agent_with_mcp().
+
+    Sub-agent transfer restrictions:
+    - disallow_transfer_to_peers=True: Can't route directly to sibling agents
+    - disallow_transfer_to_parent=False (default): CAN return to orchestrator
     """
-    from pathlib import Path
-
-    from google.adk.agents import Agent
-
-    from core.agent_loader import create_agent_with_mcp
-
-    # Load configuration from YAML
     config = _load_config()
-
-    # Get paths to sub-agent configs
     agents_dir = Path(__file__).parent.parent
 
-    # Create FRESH sub-agent instances (not imported globals)
-    # This avoids "already has a parent agent" errors on reload
-    rca_sub = create_agent_with_mcp(agents_dir / "rca" / "root_agent.yaml")
-    performance_sub = create_agent_with_mcp(agents_dir / "performance" / "root_agent.yaml")
-    capacity_sub = create_agent_with_mcp(agents_dir / "capacity" / "root_agent.yaml")
-    upgrade_sub = create_agent_with_mcp(agents_dir / "upgrade" / "root_agent.yaml")
+    # Create fresh sub-agent instances for this orchestrator
+    # Each sub-agent gets:
+    # - MCP tools for system interaction
+    # - PlanReActPlanner for structured reasoning (model-agnostic)
+    # - Callbacks for security (rate limiting, input validation, safety)
+    # - Transfer restriction: can't route to peers, only back to orchestrator
+    rca_sub = create_agent_with_mcp(
+        agents_dir / "rca" / "root_agent.yaml",
+        use_planner=True,  # Sub-agents execute tools and produce answers
+        disallow_transfer_to_peers=True,
+    )
+    performance_sub = create_agent_with_mcp(
+        agents_dir / "performance" / "root_agent.yaml",
+        use_planner=True,  # Sub-agents execute tools and produce answers
+        disallow_transfer_to_peers=True,
+    )
+    capacity_sub = create_agent_with_mcp(
+        agents_dir / "capacity" / "root_agent.yaml",
+        use_planner=True,  # Sub-agents execute tools and produce answers
+        disallow_transfer_to_peers=True,
+    )
+    upgrade_sub = create_agent_with_mcp(
+        agents_dir / "upgrade" / "root_agent.yaml",
+        use_planner=True,  # Sub-agents execute tools and produce answers
+        disallow_transfer_to_peers=True,
+    )
+    security_sub = create_agent_with_mcp(
+        agents_dir / "security" / "root_agent.yaml",
+        use_planner=True,  # Sub-agents execute tools and produce answers
+        disallow_transfer_to_peers=True,
+    )
 
-    # Create orchestrator with fresh sub-agents
-    # The orchestrator doesn't need MCP tools directly - sub-agents have them
+    # Get callbacks for the orchestrator
+    callbacks = create_callbacks_for_agent(include_safety=True)
+
+    # Create the orchestrator agent
+    # NOTE: No planner for orchestrator - it's a router that uses transfer_to_agent
+    # PlanReActPlanner is for agents that execute tools and produce final answers
     agent = Agent(
         model=config.get("model", settings.DEFAULT_MODEL),
         name=config.get("name", "sysadmin"),
         description=config.get("description", "").strip() if config.get("description") else "",
         instruction=config.get("instruction", "").strip() if config.get("instruction") else "",
-        sub_agents=[
-            rca_sub,
-            performance_sub,
-            capacity_sub,
-            upgrade_sub,
-        ],
+        sub_agents=[rca_sub, performance_sub, capacity_sub, upgrade_sub, security_sub],
+        **callbacks,
     )
 
     logger.info(f"Sysadmin orchestrator created with {len(agent.sub_agents)} sub-agents")
     return agent
 
 
-# Create the sysadmin agent instance
-sysadmin_agent = _create_sysadmin_agent()
+# ADK pattern: module-level root_agent (like Java's public static final ROOT_AGENT)
+root_agent = _init_agent()
 
-# Alias for ADK web discovery
-root_agent = sysadmin_agent
+# Alias for convenience
+sysadmin_agent = root_agent

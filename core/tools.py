@@ -17,34 +17,36 @@ Tools for sysadmin agents.
 
 Provides MCP toolset wrapped for use with ADK Agent Config.
 This module exposes tools that can be referenced in YAML agent configs.
+
+Note: For most use cases, use create_agent_with_mcp() from agent_loader.py
+which handles MCP toolset creation automatically.
 """
 
 import logging
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Global MCP toolset instance (lazily initialized)
-_mcp_toolset = None
 
-
-def get_mcp_toolset() -> Any:
+@lru_cache(maxsize=1)
+def get_mcp_toolset() -> Any | None:
     """
-    Get the MCP toolset instance (lazily initialized).
+    Get the MCP toolset instance (lazily initialized, cached).
+
+    Uses lru_cache for thread-safe singleton pattern instead of
+    global mutable state.
 
     Returns:
-        MCPToolset or McpToolset instance, or None if not available.
+        McpToolset instance, or None if not available.
     """
-    global _mcp_toolset
-
-    if _mcp_toolset is not None:
-        return _mcp_toolset
-
     try:
         from core.mcp import create_mcp_toolset
 
-        _mcp_toolset = create_mcp_toolset()
-        return _mcp_toolset
+        toolset = create_mcp_toolset()
+        if toolset:
+            logger.info("MCP toolset initialized successfully")
+        return toolset
     except Exception as e:
         logger.warning(f"Could not create MCP toolset: {e}")
         return None

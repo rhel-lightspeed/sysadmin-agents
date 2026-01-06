@@ -26,14 +26,30 @@ It uses a fast, cheap model (Gemini Flash) to screen inputs and outputs for:
 The judge runs asynchronously and can be integrated via callbacks.
 """
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 from core.config import settings
+
+# ADK type imports - using try/except for graceful degradation
+try:
+    from google.adk.agents.callback_context import CallbackContext
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.tools.base_tool import BaseTool
+    from google.adk.tools.tool_context import ToolContext
+    ADK_TYPES_AVAILABLE = True
+except ImportError:
+    # Fallback for environments where ADK is not fully installed
+    CallbackContext = Any
+    LlmRequest = Any
+    LlmResponse = Any
+    BaseTool = Any
+    ToolContext = Any
+    ADK_TYPES_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -282,23 +298,49 @@ class GeminiSafetyJudge:
         """
         Screen user input for safety issues (sync wrapper).
 
+        Uses synchronous Gemini API to avoid event loop conflicts in callbacks.
+        ADK callbacks run in an async context, so we can't use asyncio.run().
+
         Args:
             user_input: The user's input text.
 
         Returns:
             SafetyResult with verdict and details.
         """
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Create a new event loop for sync context
-                import concurrent.futures
+        if not self.enabled:
+            return SafetyResult(
+                verdict=SafetyVerdict.SAFE,
+                threat_category=ThreatCategory.NONE,
+                reason="Safety screening disabled",
+                confidence=1.0,
+                should_block=False,
+            )
 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self.screen_input_async(user_input))
-                    return future.result(timeout=10)
-            else:
-                return loop.run_until_complete(self.screen_input_async(user_input))
+        client = self._get_client()
+        if client is None:
+            return SafetyResult(
+                verdict=SafetyVerdict.UNKNOWN,
+                threat_category=ThreatCategory.NONE,
+                reason="Judge unavailable",
+                confidence=0.0,
+                should_block=False,
+            )
+
+        prompt = INPUT_SCREENING_PROMPT.format(content=user_input)
+
+        try:
+            # Use synchronous API to avoid event loop conflicts
+            response = client.models.generate_content(
+                model=self.JUDGE_MODEL,
+                contents=prompt,
+            )
+            result = self._parse_response(response.text)
+            logger.debug(
+                f"Input screening (sync): verdict={result.verdict.value}, "
+                f"category={result.threat_category.value}, "
+                f"confidence={result.confidence}"
+            )
+            return result
         except Exception as e:
             logger.error(f"Safety judge sync error: {e}")
             return SafetyResult(
@@ -415,6 +457,68 @@ class GeminiSafetyJudge:
                 verdict=SafetyVerdict.UNKNOWN,
                 threat_category=ThreatCategory.NONE,
                 reason=f"Judge error: {e}",
+                confidence=0.0,
+                should_block=False,
+            )
+
+    def screen_tool_call(
+        self, tool_name: str, tool_args: dict[str, Any]
+    ) -> SafetyResult:
+        """
+        Screen a tool call for safety issues (sync).
+
+        Uses synchronous Gemini API to avoid event loop conflicts in callbacks.
+        ADK callbacks run in an async context, so we can't use asyncio.run().
+
+        Args:
+            tool_name: Name of the tool being called.
+            tool_args: Arguments to the tool.
+
+        Returns:
+            SafetyResult with verdict and details.
+        """
+        if not self.enabled:
+            return SafetyResult(
+                verdict=SafetyVerdict.SAFE,
+                threat_category=ThreatCategory.NONE,
+                reason="Safety screening disabled",
+                confidence=1.0,
+                should_block=False,
+            )
+
+        client = self._get_client()
+        if client is None:
+            return SafetyResult(
+                verdict=SafetyVerdict.UNKNOWN,
+                threat_category=ThreatCategory.NONE,
+                reason="Judge unavailable",
+                confidence=0.0,
+                should_block=False,
+            )
+
+        prompt = TOOL_SCREENING_PROMPT.format(
+            tool_name=tool_name,
+            tool_args=str(tool_args),
+        )
+
+        try:
+            # Use synchronous API to avoid event loop conflicts
+            response = client.models.generate_content(
+                model=self.JUDGE_MODEL,
+                contents=prompt,
+            )
+            result = self._parse_response(response.text)
+            logger.debug(
+                f"Tool screening sync ({tool_name}): verdict={result.verdict.value}, "
+                f"category={result.threat_category.value}"
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Safety judge sync error: {e}")
+            return SafetyResult(
+                verdict=SafetyVerdict.UNKNOWN,
+                threat_category=ThreatCategory.NONE,
+                reason=f"Sync error: {e}",
                 confidence=0.0,
                 should_block=False,
             )
@@ -571,13 +675,16 @@ def create_safety_screening_callback():
     Create a before_model_callback that screens input for safety.
 
     Returns:
-        Callback function for input screening.
+        Callback function with proper ADK signature:
+        (CallbackContext, LlmRequest) -> Optional[LlmResponse]
     """
 
-    def safety_callback(callback_context: Any, llm_request: Any) -> None:
+    def safety_callback(
+        callback_context: CallbackContext, llm_request: LlmRequest
+    ) -> Optional[LlmResponse]:
         """Screen user input before sending to the model."""
         if not hasattr(llm_request, "contents"):
-            return
+            return None
 
         # Extract user text
         user_text = ""
@@ -588,7 +695,7 @@ def create_safety_screening_callback():
                         user_text += part.text + " "
 
         if not user_text.strip():
-            return
+            return None
 
         # Quick pattern-based screening first (fast)
         quick_result = quick_screen_input(user_text)
@@ -597,7 +704,19 @@ def create_safety_screening_callback():
             callback_context.state["safety_blocked"] = True
             callback_context.state["safety_reason"] = quick_result.reason
             callback_context.state["safety_category"] = quick_result.threat_category.value
-            return
+            # Return an LlmResponse to block the request
+            if ADK_TYPES_AVAILABLE:
+                try:
+                    from google.genai import types
+                    return LlmResponse(
+                        content=types.Content(
+                            role="model",
+                            parts=[types.Part(text=BLOCKED_RESPONSE)],
+                        )
+                    )
+                except ImportError:
+                    pass
+            return None
 
         # LLM-based screening for production (slower but more comprehensive)
         if settings.ENVIRONMENT == "production":
@@ -608,6 +727,20 @@ def create_safety_screening_callback():
                 callback_context.state["safety_blocked"] = True
                 callback_context.state["safety_reason"] = result.reason
                 callback_context.state["safety_category"] = result.threat_category.value
+                # Return an LlmResponse to block the request
+                if ADK_TYPES_AVAILABLE:
+                    try:
+                        from google.genai import types
+                        return LlmResponse(
+                            content=types.Content(
+                                role="model",
+                                parts=[types.Part(text=BLOCKED_RESPONSE)],
+                            )
+                        )
+                    except ImportError:
+                        pass
+
+        return None  # Allow the LLM call to proceed
 
     return safety_callback
 
@@ -617,12 +750,13 @@ def create_tool_safety_callback():
     Create a before_tool_callback that screens tool calls for safety.
 
     Returns:
-        Callback function for tool screening.
+        Callback function with proper ADK signature:
+        (BaseTool, Dict, ToolContext) -> Optional[Dict]
     """
 
     def tool_safety_callback(
-        tool: Any, args: dict[str, Any], tool_context: Any
-    ) -> dict[str, Any] | str | None:
+        tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
+    ) -> Optional[dict[str, Any]]:
         """Screen tool calls before execution."""
         tool_name = getattr(tool, "name", str(tool))
 
@@ -640,20 +774,21 @@ def create_tool_safety_callback():
         # LLM-based screening for non-read-only tools in production
         if settings.ENVIRONMENT == "production":
             judge = get_safety_judge()
-            # Use sync version in callback context
+            # Use sync version to avoid event loop conflicts
+            # (ADK callbacks run in an async context where asyncio.run() would fail)
             try:
-                import asyncio
-
-                result = asyncio.run(judge.screen_tool_call_async(tool_name, args))
+                result = judge.screen_tool_call(tool_name, args)
                 if result.should_block:
                     logger.warning(f"Tool call blocked: {tool_name}, reason: {result.reason}")
+                    # Return a dict to override the tool result (per ADK spec)
                     return {
-                        "error": f"Tool call blocked for safety: {result.reason}",
+                        "status": "error",
+                        "error_message": f"Tool call blocked for safety: {result.reason}",
                         "safety_category": result.threat_category.value,
                     }
             except Exception as e:
                 logger.error(f"Tool safety check error: {e}")
 
-        return None
+        return None  # Allow the tool to execute
 
     return tool_safety_callback

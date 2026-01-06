@@ -12,16 +12,16 @@ description: |
 
 output_key: last_rca_report
 
-# Callbacks for state management and validation (CodeConfig format)
-before_agent_callbacks:
-  - name: core.callbacks.before_agent_callback
-before_tool_callbacks:
-  - name: core.callbacks.before_tool_callback
-after_tool_callbacks:
-  - name: core.callbacks.after_tool_callback
-before_model_callbacks:
-  - name: core.callbacks.rate_limit_callback
-  - name: core.callbacks.input_validation_callback
+# NOTE: Callback declarations below are for documentation/future use.
+# Due to ADK Agent Config limitations with McpToolset, agents are created
+# programmatically via create_agent_with_mcp() which applies callbacks directly.
+# See: https://google.github.io/adk-docs/agents/config/ (Known Limitations)
+#
+# Callbacks applied programmatically:
+# - before_agent_callback: Session state initialization
+# - before_tool_callback: Tool validation, host tracking
+# - after_tool_callback: Result processing, warnings
+# - before_model_callback: Rate limiting, input validation, safety screening
 
 # Generation config for more deterministic outputs
 generate_content_config:

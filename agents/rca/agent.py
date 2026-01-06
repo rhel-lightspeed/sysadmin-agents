@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 # Path to the configuration file
 CONFIG_PATH = Path(__file__).parent / "root_agent.yaml"
 
-# Create the RCA agent with MCP tools
-# Uses YAML for config, programmatic creation for MCP (ADK workaround)
-rca_agent = create_agent_with_mcp(CONFIG_PATH)
-logger.info(f"RCA agent created: {rca_agent.name}")
+# Create the RCA agent with MCP tools and PlanReActPlanner
+# - use_planner=True: Sub-agents execute tools and produce answers, so they benefit from structured reasoning
+# - PlanReActPlanner is model-agnostic (works with Gemini, Claude, GPT, etc.)
+root_agent = create_agent_with_mcp(CONFIG_PATH, use_planner=True)
 
-# Alias for ADK web discovery
-root_agent = rca_agent
+# Alias for convenience
+rca_agent = root_agent
+
+logger.info(f"RCA agent created: {root_agent.name}")

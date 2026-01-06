@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Upgrade Readiness Specialist Agent.
+Security Audit Specialist Agent.
 
-Analyzes system readiness for OS upgrades by examining package health,
-third-party repositories, disk space, and potential blockers.
+Analyzes system security posture by examining audit logs, login attempts,
+listening ports, and network connections to identify potential security issues.
 
 Uses YAML for instructions (Agent Config pattern) with MCP tools
 added programmatically to avoid serialization issues.
@@ -32,12 +32,11 @@ logger = logging.getLogger(__name__)
 # Path to the configuration file
 CONFIG_PATH = Path(__file__).parent / "root_agent.yaml"
 
-# Create the Upgrade agent with MCP tools and PlanReActPlanner
-# - use_planner=True: Sub-agents execute tools and produce answers, so they benefit from structured reasoning
-# - PlanReActPlanner is model-agnostic (works with Gemini, Claude, GPT, etc.)
-root_agent = create_agent_with_mcp(CONFIG_PATH, use_planner=True)
+# Create the Security agent with MCP tools (ADK pattern: module-level root_agent)
+root_agent = create_agent_with_mcp(CONFIG_PATH)
 
 # Alias for convenience
-upgrade_agent = root_agent
+security_agent = root_agent
 
-logger.info(f"Upgrade agent created: {root_agent.name}")
+logger.info(f"Security agent created: {root_agent.name}")
+
