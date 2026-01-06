@@ -37,6 +37,7 @@ if MOUNTED_ENV_FILE.exists():
     # This allows configuration via Kubernetes ConfigMaps
     try:
         from dotenv import load_dotenv
+
         load_dotenv(MOUNTED_ENV_FILE)
         print(f"Loaded configuration from: {MOUNTED_ENV_FILE}")
     except ImportError:
@@ -54,10 +55,7 @@ AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Note: Use 'sqlite+aiosqlite' instead of 'sqlite' because
 # DatabaseSessionService requires an async driver
 # Can be overridden to use PostgreSQL, etc. in production
-SESSION_SERVICE_URI = os.environ.get(
-    "SESSION_SERVICE_URI",
-    "sqlite+aiosqlite:///./sessions.db"
-)
+SESSION_SERVICE_URI = os.environ.get("SESSION_SERVICE_URI", "sqlite+aiosqlite:///./sessions.db")
 
 # CORS allowed origins
 # Parse from comma-separated string or use default
@@ -92,4 +90,3 @@ if __name__ == "__main__":
     # Use the PORT environment variable, defaulting to 8000
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-

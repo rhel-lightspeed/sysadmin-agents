@@ -2,6 +2,36 @@
 
 Enterprise-grade AI agents for Linux/RHEL system administration, powered by [Google ADK](https://google.github.io/adk-docs/) and [linux-mcp-server](https://github.com/rhel-lightspeed/linux-mcp-server).
 
+## What Is This?
+
+**Sysadmin Agents** is a collection of AI-powered assistants that help you troubleshoot and manage Linux servers. Instead of manually running diagnostic commands, you describe your problem in plain English and the agents investigate for you.
+
+### Who Is This For?
+
+- **System Administrators** managing RHEL, Fedora, or other Linux servers
+- **DevOps/SRE Engineers** who need quick diagnostics across multiple hosts
+- **Developers** who want AI assistance for server troubleshooting
+
+### Key Concepts
+
+| Term | What It Means |
+|------|---------------|
+| **AI Agent** | Software that uses an LLM (like Gemini) to understand your request, decide what actions to take, and execute them autonomously |
+| **Google ADK** | Agent Development Kit - Google's framework for building AI agents with tools, planning, and multi-agent orchestration |
+| **MCP** | Model Context Protocol - A standard way for AI agents to use external tools; here we use `linux-mcp-server` which provides 19 Linux diagnostic commands |
+| **Orchestrator** | The main "sysadmin" agent that understands your problem and delegates to specialist agents |
+| **Specialist Agent** | Focused agents for specific tasks (performance, security, capacity, etc.) |
+
+### Why Use This Instead of SSH?
+
+| Traditional Approach | With Sysadmin Agents |
+|---------------------|---------------------|
+| SSH into server, run `top`, `df -h`, `journalctl`... | Ask: "Why is the server slow?" |
+| Remember which commands to use | Agent knows the right diagnostic tools |
+| Manually correlate logs and metrics | Agent synthesizes findings into recommendations |
+| Repeat for each server | Query multiple hosts in one conversation |
+| Context lost between sessions | Session state preserved |
+
 ## Architecture
 
 ```
@@ -39,6 +69,57 @@ Enterprise-grade AI agents for Linux/RHEL system administration, powered by [Goo
            └────────┘  └────────┘  └────────┘
 ```
 
+<details>
+<summary><strong>View as Mermaid Diagram</strong> (click to expand)</summary>
+
+```mermaid
+flowchart TB
+    subgraph UI [ADK Web Interface]
+        WebUI[Browser UI at localhost:8000]
+    end
+
+    subgraph Orchestrator [Sysadmin Agent]
+        Router[Orchestrator - Routes via transfer_to_agent]
+    end
+
+    subgraph Specialists [Specialist Sub-Agents]
+        RCA[RCA Agent]
+        Perf[Performance Agent]
+        Cap[Capacity Agent]
+        Upg[Upgrade Agent]
+        Sec[Security Agent]
+    end
+
+    subgraph MCP [MCP Layer]
+        MCPServer[linux-mcp-server with 19 tools]
+    end
+
+    subgraph Targets [Target Systems]
+        RHEL1[RHEL Server 1]
+        RHEL2[RHEL Server 2]
+        RHELn[RHEL Server n]
+    end
+
+    WebUI --> Router
+    Router -->|transfer_to_agent| RCA
+    Router -->|transfer_to_agent| Perf
+    Router -->|transfer_to_agent| Cap
+    Router -->|transfer_to_agent| Upg
+    Router -->|transfer_to_agent| Sec
+
+    RCA --> MCPServer
+    Perf --> MCPServer
+    Cap --> MCPServer
+    Upg --> MCPServer
+    Sec --> MCPServer
+
+    MCPServer -->|SSH| RHEL1
+    MCPServer -->|SSH| RHEL2
+    MCPServer -->|SSH| RHELn
+```
+
+</details>
+
 ## How It Works
 
 The **Sysadmin Agent** is the single entry point. Users describe their problem naturally, and the agent:
@@ -69,6 +150,30 @@ The [linux-mcp-server](https://github.com/rhel-lightspeed/linux-mcp-server) runs
                          │ RHEL 1 │       │ RHEL 2 │       │ RHEL n │
                          └────────┘       └────────┘       └────────┘
 ```
+
+<details>
+<summary><strong>View as Mermaid Diagram</strong> (click to expand)</summary>
+
+```mermaid
+flowchart LR
+    subgraph Container [Container]
+        FastAPI[FastAPI - ADK API + Web UI]
+        MCPProc[linux-mcp-server subprocess]
+        FastAPI <-->|stdio| MCPProc
+    end
+
+    subgraph External [Target Systems]
+        RHEL1[RHEL 1]
+        RHEL2[RHEL 2]
+        RHELn[RHEL n]
+    end
+
+    MCPProc -->|SSH| RHEL1
+    MCPProc -->|SSH| RHEL2
+    MCPProc -->|SSH| RHELn
+```
+
+</details>
 
 The MCP server uses SSH with key-based authentication to execute read-only diagnostic commands on remote RHEL servers.
 
@@ -111,36 +216,114 @@ This provides transparent, step-by-step reasoning for complex troubleshooting.
 
 ### Prerequisites
 
-- **API Key**: [Gemini API Key](https://aistudio.google.com/apikey)
-- **SSH Access**: Key-based SSH access to target RHEL/Linux hosts
-- **Runtime** (choose one):
-  - Python 3.10+ (for local development)
-  - Podman or Docker (for container deployment)
-  - OpenShift/Kubernetes cluster (for production)
+#### 1. Gemini API Key (Required)
+
+Get a free API key from [Google AI Studio](https://aistudio.google.com/apikey):
+
+1. Sign in with your Google account
+2. Click "Create API Key"
+3. Copy the key (starts with `AIza...`)
+
+> **Note**: The free tier includes 60 requests/minute which is sufficient for testing. See [Gemini pricing](https://ai.google.dev/pricing) for production usage.
+
+#### 2. SSH Access to Target Hosts (Required)
+
+The agents connect to your Linux servers via SSH. You need:
+
+- **SSH key pair** - If you don't have one:
+
+  ```bash
+  # Generate a new SSH key (press Enter to accept defaults)
+  ssh-keygen -t ed25519 -C "sysadmin-agents"
+  
+  # This creates ~/.ssh/id_ed25519 (private) and ~/.ssh/id_ed25519.pub (public)
+  ```
+
+- **Copy public key to target hosts**:
+
+  ```bash
+  # Replace 'user' and 'hostname' with your values
+  ssh-copy-id -i ~/.ssh/id_ed25519.pub user@hostname
+  
+  # Test the connection (should not prompt for password)
+  ssh -i ~/.ssh/id_ed25519 user@hostname "echo 'SSH works!'"
+  ```
+
+- **Required permissions on target hosts**:
+  - User must be able to run diagnostic commands (`ps`, `df`, `journalctl`, etc.)
+  - For full functionality, user should have `sudo` access or be in the `wheel`/`adm` group
+
+#### 3. Runtime (Choose One)
+
+- **Python 3.10+** - For local development
+- **Podman or Docker** - For container deployment
+- **OpenShift/Kubernetes** - For production
 
 ### Option 1: Local Development
 
 ```bash
 git clone https://github.com/your-org/sysadmin-agents.git
 cd sysadmin-agents
+```
 
-# Create virtual environment (using uv recommended)
+**Using uv (recommended - faster):**
+
+```bash
+# Install uv if you don't have it (https://docs.astral.sh/uv/)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install
 uv venv
+source .venv/bin/activate
+uv pip install -e ".[web]"
+```
+
+**Using standard pip:**
+
+```bash
+# Create virtual environment
+python3 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-uv pip install -e .
+pip install -e ".[web]"
+```
 
-# Set environment variables
+**Configure environment:**
+
+```bash
+# Copy the example config and edit it
+cp deploy/config.env.example .env
+
+# Or set variables directly:
 export GOOGLE_API_KEY=your-gemini-api-key
 export LINUX_MCP_USER=your-ssh-username
 export LINUX_MCP_SSH_KEY_PATH=~/.ssh/id_ed25519
+```
 
-# Start ADK web interface
+**Start the ADK web interface:**
+
+```bash
 adk web --port 8000 agents
 ```
 
 Open http://localhost:8000 and select the **sysadmin** agent.
+
+### Verify Installation
+
+Before connecting to real servers, verify the setup works:
+
+```bash
+# Check that agents load correctly
+curl -s http://localhost:8000/list-apps | python3 -m json.tool
+# Should return: ["agents", "core"]
+
+# Check the web UI is accessible
+# Open http://localhost:8000/dev-ui/ in your browser
+# You should see a dropdown with "sysadmin" and other agents
+```
+
+If you see the agents list, the installation is working. Now you can try a real query with your target host.
 
 ### Option 2: Container (Podman/Docker)
 
@@ -838,6 +1021,109 @@ GitHub Actions workflow (`.github/workflows/build-image.yaml`) automatically:
 3. Pushes to GitHub Container Registry on `main` branch or tags
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions.
+
+## Troubleshooting
+
+### Common Issues
+
+#### "No module named 'google.adk'"
+
+The ADK package isn't installed. Make sure you installed with the web extras:
+
+```bash
+pip install -e ".[web]"
+# or
+uv pip install -e ".[web]"
+```
+
+#### "API key not valid" or 401 errors
+
+Your Gemini API key is invalid or not set:
+
+```bash
+# Check if the variable is set
+echo $GOOGLE_API_KEY
+
+# Set it if missing
+export GOOGLE_API_KEY=your-key-here
+```
+
+Get a new key at [Google AI Studio](https://aistudio.google.com/apikey).
+
+#### "Connection refused" or SSH errors
+
+The MCP server can't connect to your target hosts:
+
+1. **Test SSH manually first**:
+
+   ```bash
+   ssh -i ~/.ssh/id_ed25519 user@hostname "echo works"
+   ```
+
+2. **Check environment variables**:
+
+   ```bash
+   echo $LINUX_MCP_USER
+   echo $LINUX_MCP_SSH_KEY_PATH
+   ```
+
+3. **Verify key permissions**:
+
+   ```bash
+   chmod 600 ~/.ssh/id_ed25519
+   ```
+
+#### Agent not appearing in dropdown
+
+The agent module has an error. Check the console for import errors:
+
+```bash
+# Run with verbose logging
+adk web --port 8000 agents 2>&1 | grep -i error
+```
+
+Common causes:
+- Syntax error in `root_agent.yaml`
+- Missing `__init__.py`
+- Import error in `agent.py`
+
+#### "Rate limit exceeded"
+
+You've hit the Gemini API rate limit (60 requests/minute on free tier). Wait a moment and try again, or upgrade your API plan.
+
+### Debug Mode
+
+Run with debug logging to see what's happening:
+
+```bash
+export LINUX_MCP_LOG_LEVEL=DEBUG
+adk web --port 8000 agents
+```
+
+### Getting Help
+
+If you're still stuck:
+1. Check the [open issues](https://github.com/your-org/sysadmin-agents/issues)
+2. Open a new issue with:
+   - Python version (`python --version`)
+   - OS and version
+   - Full error message
+   - Steps to reproduce
+
+## Glossary
+
+| Term | Definition |
+|------|------------|
+| **ADK** | Agent Development Kit - Google's Python framework for building AI agents |
+| **Agent** | AI-powered software that can understand requests, make decisions, and execute actions autonomously |
+| **CORS** | Cross-Origin Resource Sharing - security feature for web APIs |
+| **LLM** | Large Language Model - the AI model (like Gemini) that powers the agents |
+| **MCP** | Model Context Protocol - standardized way for AI agents to use external tools |
+| **Orchestrator** | The main agent that understands requests and routes to specialists |
+| **PlanReActPlanner** | ADK's planning strategy that creates a plan, then executes it step-by-step |
+| **Specialist** | A focused agent for a specific domain (performance, security, etc.) |
+| **SSE** | Server-Sent Events - streaming protocol for real-time responses |
+| **transfer_to_agent** | ADK function that routes a conversation from one agent to another |
 
 ## Contributing
 

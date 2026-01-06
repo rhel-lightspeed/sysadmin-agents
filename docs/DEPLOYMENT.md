@@ -4,37 +4,66 @@ This guide covers deploying Sysadmin Agents using the pre-built container image.
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph Cluster [OpenShift/Kubernetes Cluster]
+        subgraph Pod [sysadmin-agents Pod]
+            subgraph Container [Container]
+                FastAPI[FastAPI - ADK API + Web UI]
+                MCP[linux-mcp-server - 19 tools]
+                FastAPI <-->|stdio| MCP
+            end
+        end
+        
+        subgraph Config [Configuration]
+            ConfigMap[ConfigMap - .env file]
+            Secret1[Secret - GOOGLE_API_KEY]
+            Secret2[Secret - SSH Key]
+        end
+        
+        ConfigMap -->|mount| Container
+        Secret1 -->|env| Container
+        Secret2 -->|mount| Container
+    end
+    
+    subgraph Targets [Target Systems]
+        RHEL1[RHEL Server 1]
+        RHEL2[RHEL Server 2]
+        RHELn[RHEL Server n]
+    end
+    
+    MCP -->|SSH| RHEL1
+    MCP -->|SSH| RHEL2
+    MCP -->|SSH| RHELn
+```
+
+<details>
+<summary><strong>View ASCII diagram</strong> (for terminals without Mermaid support)</summary>
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      OpenShift/Kubernetes                           │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │                  sysadmin-agents Pod                          │  │
-│  │                                                               │  │
 │  │  ┌─────────────────────────────────────────────────────────┐  │  │
-│  │  │  Container: ghcr.io/your-org/sysadmin-agents            │  │  │
-│  │  │                                                          │  │  │
+│  │  │  Container                                              │  │  │
 │  │  │  ┌────────────────┐   stdio   ┌───────────────────────┐ │  │  │
 │  │  │  │ FastAPI        │◄─────────►│ linux-mcp-server      │ │  │  │
-│  │  │  │ (ADK API +     │           │ (19 tools)            │ │  │  │
-│  │  │  │  Web UI)       │           │                       │ │  │  │
 │  │  │  └────────────────┘           └───────────┬───────────┘ │  │  │
 │  │  └──────────────────────────────────────────┼──────────────┘  │  │
-│  │                                              │ SSH             │  │
 │  └──────────────────────────────────────────────┼────────────────┘  │
-│                                                 │                   │
-│  ConfigMap ─────► /opt/app-root/config/.env     │                   │
-│  Secret ────────► GOOGLE_API_KEY                │                   │
-│  Secret ────────► /opt/app-root/src/.ssh/       │                   │
-│                                                 │                   │
-└─────────────────────────────────────────────────┼───────────────────┘
-                                                  │
+│  ConfigMap ─► /opt/app-root/config/.env         │ SSH              │
+│  Secret ────► GOOGLE_API_KEY, SSH Key           │                  │
+└─────────────────────────────────────────────────┼──────────────────┘
                               ┌───────────────────┼───────────────────┐
                               ▼                   ▼                   ▼
                          ┌────────┐          ┌────────┐          ┌────────┐
                          │ RHEL 1 │          │ RHEL 2 │          │ RHEL n │
                          └────────┘          └────────┘          └────────┘
 ```
+
+</details>
 
 ## Prerequisites
 

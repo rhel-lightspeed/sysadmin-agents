@@ -40,8 +40,9 @@ Please be respectful and constructive in all interactions. We welcome contributo
 4. **Set up environment variables**
 
    ```bash
-   cp .env.example .env
-   # Edit .env with your settings
+   # Copy the example config
+   cp deploy/config.env.example .env
+   # Edit .env with your settings (at minimum, set GOOGLE_API_KEY and LINUX_MCP_USER)
    ```
 
 ## Development Workflow
@@ -146,10 +147,9 @@ See [ADDING_AGENTS.md](ADDING_AGENTS.md) for detailed instructions on creating n
 Quick overview:
 
 1. Create directory: `agents/<agent_name>/`
-2. Add files: `__init__.py`, `agent.py`, `config.yaml`
-3. Define agent in `config.yaml` with YAML-driven configuration
-4. Export agent in `agents/__init__.py`
-5. Add tests in `tests/test_<agent_name>.py`
+2. Add files: `__init__.py`, `agent.py`, `root_agent.yaml`
+3. Define agent in `root_agent.yaml` with YAML-driven configuration
+4. Add tests in `tests/test_<agent_name>.py`
 
 ## Pull Request Guidelines
 
