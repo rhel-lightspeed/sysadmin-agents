@@ -1,0 +1,83 @@
+# Callback Configuration for Sysadmin Agents
+# All callback settings are configurable via this YAML file
+
+# =============================================================================
+# Rate Limiting Configuration
+# =============================================================================
+rate_limiting:
+  # Time window for rate limit tracking (seconds)
+  window_seconds: 60
+  # Maximum requests per minute
+  requests_per_minute: 10
+
+# =============================================================================
+# Security Patterns
+# =============================================================================
+security:
+  # Patterns that should be BLOCKED entirely (most dangerous)
+  # These patterns will prevent execution in production mode
+  blocked_patterns:
+    - pattern: '\brm\s+-rf\s+/'
+      description: "rm -rf / (root filesystem deletion)"
+    - pattern: '\bmkfs\b'
+      description: "Format filesystem"
+    - pattern: '\bdd\s+if=.*of=/dev/'
+      description: "dd to device (raw disk write)"
+    - pattern: ':\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:'
+      description: "Fork bomb"
+    - pattern: '\bchmod\s+-R\s+777\s+/'
+      description: "chmod 777 / (insecure permissions on root)"
+    - pattern: '\bshutdown\b'
+      description: "System shutdown"
+    - pattern: '\breboot\b'
+      description: "System reboot"
+    - pattern: '\binit\s+0\b'
+      description: "Runlevel 0 (halt)"
+
+  # Patterns that trigger a WARNING but don't block
+  # Logged for audit purposes
+  sensitive_patterns:
+    - pattern: '\brm\s+-rf\b'
+      description: "rm -rf (recursive force delete)"
+    - pattern: '\bkill\s+-9\b'
+      description: "Force kill process"
+    - pattern: '\bsystemctl\s+(stop|disable)\b'
+      description: "Service stop/disable"
+    - pattern: '\biptables\b'
+      description: "Firewall rule changes"
+    - pattern: '\bpasswd\b'
+      description: "Password changes"
+
+# =============================================================================
+# Host Validation
+# =============================================================================
+host_validation:
+  # Tools that require a 'host' parameter for remote execution
+  # These tools will have their host parameter validated against allowed_hosts
+  host_aware_tools:
+    - get_system_information
+    - get_cpu_information
+    - get_memory_information
+    - get_disk_usage
+    - list_processes
+    - get_process_info
+    - get_service_status
+    - get_service_logs
+    - get_journal_logs
+    - get_audit_logs
+    - read_log_file
+    - get_network_connections
+    - get_listening_ports
+    - list_block_devices
+    - list_directories
+    - get_network_interfaces
+
+# =============================================================================
+# Resource Thresholds for Alerting
+# =============================================================================
+thresholds:
+  # Disk usage percentage to trigger warning in after_tool_callback
+  disk_warning_percent: 90
+  # Memory usage percentage to trigger warning
+  memory_warning_percent: 90
+

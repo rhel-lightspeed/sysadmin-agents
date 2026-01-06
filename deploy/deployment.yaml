@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sysadmin-agents
+  namespace: adk-web
+  labels:
+    app: sysadmin-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sysadmin-agents
+  template:
+    metadata:
+      labels:
+        app: sysadmin-agents
+    spec:
+      containers:
+        - name: adk-server
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              
+              # Create workspace directories
+              mkdir -p /workspace/agents /workspace/core /workspace/.adk /workspace/packages
+              
+              # Copy code from ConfigMaps
+              cp -r /configmap/agents/* /workspace/agents/ 2>/dev/null || true
+              cp -r /configmap/core/* /workspace/core/ 2>/dev/null || true
+              
+              # Install dependencies
+              echo "Installing dependencies..."
+              pip install --no-cache-dir --target=/workspace/packages \
+                google-adk>=1.18.0 \
+                linux-mcp-server \
+                pyyaml \
+                pydantic-settings
+              
+              # Set up Python path
+              export PYTHONPATH=/workspace/packages:/workspace:$PYTHONPATH
+              export PATH=/workspace/packages/bin:$PATH
+              
+              # Start ADK Web
+              echo "Starting ADK Web..."
+              cd /workspace
+              python -m google.adk.cli web \
+                --host=0.0.0.0 \
+                --port=8000 \
+                --allow_origins=*
+          env:
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: GOOGLE_API_KEY
+            - name: HOME
+              value: /workspace
+            - name: LINUX_MCP_SSH_KEY_PATH
+              value: /var/lib/mcp/.ssh/id_ed25519
+            - name: LINUX_MCP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ssh-credentials
+                  key: username
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: agents-code
+              mountPath: /configmap/agents
+            - name: core-code
+              mountPath: /configmap/core
+            - name: workspace
+              mountPath: /workspace
+            - name: ssh-key
+              mountPath: /var/lib/mcp/.ssh
+              readOnly: true
+          workingDir: /workspace
+      volumes:
+        - name: agents-code
+          configMap:
+            name: sysadmin-agents-code
+        - name: core-code
+          configMap:
+            name: sysadmin-core-code
+        - name: workspace
+          emptyDir: {}
+        - name: ssh-key
+          secret:
+            secretName: ssh-private-key
+            defaultMode: 0400
+            optional: true
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
