@@ -13,7 +13,7 @@
 #     -v ~/.ssh/id_ed25519:/opt/app-root/src/.ssh/id_ed25519:ro \
 #     sysadmin-agents:latest
 
-FROM registry.access.redhat.com/ubi9/python-311:latest
+FROM registry.access.redhat.com/ubi9/python-311:latest@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Sysadmin Agents"
