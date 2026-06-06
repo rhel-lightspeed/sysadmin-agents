@@ -55,7 +55,7 @@ jobs:
         run: pytest --cov=agents --cov=core --cov-report=xml
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
